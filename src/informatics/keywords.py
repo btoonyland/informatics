@@ -1,10 +1,16 @@
 """Keyword definitions: what counts as an AI paper, a medicine paper, and each secondary theme.
 
-Edit this file (not the filtering code) to change what is selected. Each key is the original
-term from the first version of the filter; the value is a regular expression that also accepts
-its plural, hyphenated and spelling variants. Matching is case-insensitive on title + abstract,
-and word boundaries are added automatically, so ``patients?`` matches "patient" and "patients"
-but not "outpatient".
+Edit this file (not the filtering code) to change what is selected. ``AI_TERMS`` and
+``MEDICINE_TERMS`` are the original keyword rule: each key is a term from the first version of
+the filter, and the value is a regular expression that also accepts its plural, hyphenated and
+spelling variants. Matching is case-insensitive on title + abstract, and word boundaries are
+added automatically, so ``patients?`` matches "patient" and "patients" but not "outpatient".
+
+``AI_CONTEXT_TERMS`` and ``MEDICINE_CONTEXT_TERMS`` widen the net for the two-stage selection
+(see filtering.py): a paper with any AI term and any medicine term, from either list, is a
+*candidate*, and a classifier or a language model then decides whether it is about AI in
+medicine. These lists favour recall. A wrong match only costs some classification time, while a
+missing term loses relevant papers for good.
 
 Variants were only added where they keep the meaning: for example ``adoption`` does not accept
 "adopt", because "we adopt a U-Net" is about methods, not adoption.
@@ -40,6 +46,116 @@ MEDICINE_TERMS: dict[str, str] = {
     "medical": r"medical",
     "physicians": r"physicians?",
     "nursing": r"nursing",
+}
+
+# The wide net. Words with a common unrelated sense are only accepted in phrases that fix the
+# sense: "recurrent" alone is often medical ("recurrent stroke"), "stroke" often is not ("pen
+# strokes"), "admissions" can be university admissions and "discharge" electrical.
+AI_CONTEXT_TERMS: dict[str, str] = {
+    "learning methods": (
+        r"(?:reinforcement|representation|transfer|federated|contrastive|metric|multi[- ]?task"
+        r"|meta|ensemble|active|statistical|feature|continual|multiple[- ]instance|imitation"
+        r"|graph|end[- ]to[- ]end|(?:semi|self|weakly|un)?[- ]?supervised) learning"
+        r"|(?:semi|self|weakly|un)[- ]?supervised|(?:few|zero|one)[- ]shot|learning[- ]based"
+        r"|machine[- ]learned|pre-?train(?:ed|ing)|fine-?tun(?:e|ed|es|ing)"
+        r"|training (?:data|sets?|datasets?)"
+    ),
+    "network architectures": (
+        r"cnns?|rnns?|lstms?|grus?|gnns?|convolutional|recurrent networks?"
+        r"|long short[- ]term memory|u-?nets?|resnets?|autoencoders?|(?:vision )?transformers?"
+        r"|transformer[- ]based|attention mechanisms?|self[- ]attention"
+        r"|multi[- ]?layer perceptrons?"
+        r"|deep (?:models?|networks?|architectures?|features?|reinforcement)"
+    ),
+    "language models": (
+        r"(?:pre-?trained |masked |medical |clinical |biomedical )?language models?|chatbots?"
+        r"|conversational agents?|chat-?gpt|gpt(?:-?\d(?:\.\d)?o?)?|bert|biobert|clinicalbert"
+        r"|pubmedbert|llama|generative (?:ai|pre-?trained)|genai"
+    ),
+    "generative models": (
+        r"generative (?:adversarial networks?|models?)|gans?|diffusion models?"
+        r"|variational autoencoders?|vaes?|normali[sz]ing flows?"
+    ),
+    "classical machine learning": (
+        r"random forests?|support vector (?:machines?|regression)|svms?"
+        r"|gradient[- ]boost(?:ing|ed)?"
+        r"|xgboost|lightgbm|catboost|k[- ]?nearest neighbou?rs?|k-?nn|naive bayes|decision trees?"
+        r"|bayesian networks?|hidden markov models?|classifiers?|(?:prediction|predictive) models?"
+    ),
+    "intelligent systems": (
+        r"intelligent (?:systems?|agents?|assistants?)|expert systems?|knowledge[- ]based systems?"
+        r"|decision[- ]support systems?|cdss|computer[- ]aided (?:diagnosis|detection)"
+        r"|(?:automated|automatic) (?:diagnosis|detection|screening|segmentation|classification)"
+        r"|machine intelligence|computational intelligence|soft computing|fuzzy (?:logic|systems?)"
+    ),
+    "data mining and recognition": (
+        r"data[- ]mining|text[- ]mining|pattern recognition|predictive analytics"
+        r"|(?:image|speech|object|activity|gesture|emotion|face|facial expression) recognition"
+        r"|object detection|(?:semantic|instance) segmentation|image classification"
+        r"|named entity recognition|information extraction|question answering"
+        r"|(?:word|sentence|graph|node|patient) embeddings?"
+    ),
+}
+
+MEDICINE_CONTEXT_TERMS: dict[str, str] = {
+    "clinicians and carers": (
+        r"clinics?|clinicians?|clinically|nurses?|surgeons?|radiologists?|pathologists?"
+        r"|dermatologists?|ophthalmologists?|cardiologists?|psychiatrists?|caregivers?"
+        r"|care[- ]givers?|general practi(?:ce|tioners?)"
+    ),
+    "care settings": (
+        r"intensive care(?: units?)?|icus?|emergency (?:departments?|rooms?|medicine)"
+        r"|primary care|inpatients?|outpatients?|hospitali[sz](?:ed|ation|ations)|telemedicine"
+        r"|telehealth|ambulances?|nursing homes?|care homes?|readmissions?"
+        r"|discharge (?:summar(?:y|ies)|notes?)|bedside"
+    ),
+    "specialties": (
+        r"radiolog(?:y|ical)|histopatholog\w*|(?:digital|computational|clinical|surgical) pathology"
+        r"|oncolog\w*|cardiolog\w*|dermatolog\w*|ophthalmolog\w*|neurolog(?:y|ical)"
+        r"|psychiatr(?:y|ic)|surg(?:ery|eries|ical)|ana?esthe(?:sia|siology|tics?)"
+        r"|pa?ediatrics?|obstetric\w*|gyna?ecolog\w*|urolog\w*|nephrolog\w*|gastroenterolog\w*"
+        r"|endocrinolog\w*|geriatrics?|dentistry|dentists?|dental|epidemiolog\w*"
+        r"|pharmacolog\w*|pharmac(?:y|ies|ists?|eutical)"
+    ),
+    "imaging and signals": (
+        r"mri|fmri|magnetic resonance|ct (?:scans?|images?|imaging|volumes?)|computed tomography"
+        r"|radiographs?|radiography|x-?ray (?:images?|scans?)|chest x-?rays?"
+        r"|mammogra(?:ms?|phy|phic)|ultrasound|ultrasonograph\w*|sonograph\w*|echocardiogra\w*"
+        r"|electrocardiogra\w*|ecgs?|ekgs?|eegs?|electroencephalogra\w*|emgs?|electromyogra\w*"
+        r"|pet (?:scans?|imaging|images?)|positron emission|fundus|retinal|optical coherence"
+        r" tomography|whole[- ]slide images?|histolog(?:y|ical)|biops(?:y|ies)|dermoscop\w*"
+        r"|endoscop\w*|colonoscop\w*"
+    ),
+    "conditions": (
+        r"diseases?|disorders?|syndromes?|cancers?|tumou?rs?|carcinomas?|malignan(?:t|cy|cies)"
+        r"|lesions?|metasta\w*|diabet(?:es|ic)|alzheimer'?s?|parkinson'?s?|dementia"
+        r"|(?:ischa?emic|acute|ha?emorrhagic) strokes?|stroke (?:patients?|survivors?|risk)"
+        r"|sepsis|septic|covid(?:-?19)?|sars-cov-2|coronavirus|pneumonia|tuberculosis|hiv"
+        r"|malaria|influenza|epilep(?:sy|tic)|seizures?|autis(?:m|tic)|adhd|schizophreni\w*"
+        r"|bipolar|depress(?:ion|ive)|anxiety|suicid\w*|mental illness(?:es)?|cardiovascular"
+        r"|heart (?:disease|failure|attack|rate)|arrhythmi\w*|atrial fibrillation|hypertension"
+        r"|obesity|asthma|copd|kidney|renal|liver|hepat(?:ic|itis|ocellular)|glaucoma"
+        r"|retinopathy|macular|cataracts?|melanoma|leuka?emia|lymphoma|infections?|infectious"
+        r"|pandemics?|epidemics?|injur(?:y|ies)|wounds?|pain|frailty|comorbid\w*"
+    ),
+    "care and treatment": (
+        r"therap(?:y|ies|eutic|ists?)|drugs?|medications?|prescri(?:be|bed|bing|ptions?)"
+        r"|dosage|dosing|vaccin\w*|rehabilitation|symptoms?|diagnos(?:is|es|e|tics?|ed|ing)"
+        r"|prognos(?:is|es|tic)|screening|mortality|morbidity|survival analysis"
+    ),
+    "biomedical": (
+        r"biomedic(?:al|ine)|biomarkers?|physiolog(?:y|ical)|pathogen(?:s|esis)?|anatom(?:y|ical)"
+        r"|tissues?|blood (?:pressure|glucose|tests?|samples?|cells?)|glucose|insulin|vital signs"
+        r"|wearables?|health records|ehrs?|emrs?|cohorts?|clinical trials?"
+        r"|randomi[sz]ed (?:controlled )?trials?|healthy (?:controls?|subjects?|volunteers?)"
+        r"|elderly|older adults|neonat\w*|newborns?|infants?|pregnan(?:t|cy|cies)|maternal"
+        r"|well-?being|lungs?|pulmonary|cardiac|breast|prostate|colorectal|thyroid|pancrea\w*"
+        r"|brain (?:tumou?rs?|mri|lesions?|scans?|images?|disorders?|diseases?|injur(?:y|ies))"
+        r"|skin (?:lesions?|cancers?|diseases?)|chest"
+    ),
+    "medical datasets and exams": (
+        r"usmle|medqa|pubmedqa|mimic-?(?:iii|iv|cxr)|chexpert|physionet|brats|isic"
+    ),
 }
 
 
@@ -151,7 +267,22 @@ class ThemeMatcher:
 
 AI = TermMatcher(AI_TERMS)
 MEDICINE = TermMatcher(MEDICINE_TERMS)
+AI_CONTEXT = TermMatcher(AI_CONTEXT_TERMS)
+MEDICINE_CONTEXT = TermMatcher(MEDICINE_CONTEXT_TERMS)
 THEME_MATCHER = ThemeMatcher(THEMES)
+
+
+def keyword_lists() -> dict:
+    """Every pattern used to select papers and tag themes, as recorded with each result."""
+    return {
+        "ai": AI_TERMS,
+        "medicine": MEDICINE_TERMS,
+        "ai_context": AI_CONTEXT_TERMS,
+        "medicine_context": MEDICINE_CONTEXT_TERMS,
+        "themes": {
+            name: {"include": t.include, "exclude": t.exclude} for name, t in THEMES.items()
+        },
+    }
 
 
 def selection_phrases() -> set[str]:

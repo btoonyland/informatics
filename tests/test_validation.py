@@ -29,57 +29,107 @@ def test_parse_label_rejects_unknown_values():
         parse_label("maybe")
 
 
-def test_evaluate_labels_scales_strata_to_population():
-    key = pd.DataFrame(
-        {
-            "id": [str(i) for i in range(30)],
-            "stratum": ["selected"] * 10 + ["ai_only"] * 10 + ["neither"] * 10,
-        }
-    )
-    relevant = ["1"] * 8 + ["0"] * 2 + ["1"] + ["0"] * 9 + ["0"] * 9 + [""]  # one row unlabelled
+def _labelled_sample():
+    """20 labelled candidates, 10 AI-only papers and 10 "neither" papers (one unlabelled)."""
+    strata = ["strict"] * 10 + ["wide_only"] * 10 + ["ai_only"] * 10 + ["neither"] * 10
+    relevant = (
+        ["1"] * 8 + ["0"] * 2  # strict: 8 of 10 relevant
+        + ["1"] * 5 + ["0"] * 5  # wide_only: 5 of 10
+        + ["1"] + ["0"] * 9  # ai_only: 1 of 10
+        + ["0"] * 9 + [""]  # neither: none; one row not labelled yet
+    )  # fmt: skip
+    key = pd.DataFrame({"id": [str(i) for i in range(40)], "stratum": strata})
     sheet = pd.DataFrame({"id": key["id"], "relevant": relevant})
     summary = {
-        "counts": {
-            "selected": 500,
-            "ai_only": 1000,
-            "medicine_only": 0,
-            "neither": 5000,
-            "below_threshold": 0,
-        }
-    }
+        "counts": {"strict": 500, "wide_only": 200, "ai_only": 1000, "medicine_only": 0,
+                   "neither": 5000}
+    }  # fmt: skip
+    return sheet, key, summary
+
+
+def test_evaluate_labels_scales_strata_to_population():
+    sheet, key, summary = _labelled_sample()
     table, result = evaluate_labels(sheet, key, summary)
-    assert result["precision"] == pytest.approx(0.8)
-    assert result["estimated_relevant_selected"] == pytest.approx(400)
-    assert result["estimated_relevant_missed"] == pytest.approx(100)  # 10% of 1000 AI-only papers
-    assert result["recall"] == pytest.approx(0.8)
+    rule, wide = result["keyword_rule"], result["wide_net"]
+    # Estimated relevant papers: 400 strict + 100 wide-only + 100 AI-only (10% of 1000) = 600.
+    assert result["estimated_relevant_in_set"] == pytest.approx(600)
+    assert rule["precision"] == pytest.approx(0.8)
+    assert rule["recall"] == pytest.approx(400 / 600)
+    assert rule["recall_ci"][0] < rule["recall"] < rule["recall_ci"][1]
+    assert rule["kappa"] == pytest.approx(0.3)
+    assert wide["recall"] == pytest.approx(500 / 600)
+    assert wide["precision"] == pytest.approx(500 / 700) and wide["candidates"] == 700
+    assert result["classifier"] is None and result["labellers"] is None
     assert result["unlabelled_rows"] == 1 and result["unlabelled_strata"] == []
     assert table.set_index("stratum").loc["neither", "labelled"] == 9
 
 
-def test_label_sample_is_blind_and_stratified(layout):
-    run_filter(layout.raw("cs"), "cs", layout.selected("cs"), layout.background("cs"),
+def test_evaluate_labels_measures_the_classifier():
+    sheet, key, summary = _labelled_sample()
+    predicted = (
+        [True] * 8 + [True, False]  # strict: all relevant found, one false positive
+        + [True] * 4 + [False] + [False] * 5  # wide_only: one relevant paper missed
+    )  # fmt: skip
+    decisions = pd.DataFrame({"id": [str(i) for i in range(20)], "predicted": predicted})
+    _, result = evaluate_labels(sheet, key, summary, decisions, method="model")
+    c = result["classifier"]
+    # TP = 8*50 + 4*20 = 480, FP = 1*50, FN = 1*20 among candidates, 100 outside the net.
+    assert c["precision"] == pytest.approx(480 / 530)
+    assert c["recall"] == pytest.approx(480 / 600)
+    assert c["recall_within_candidates"] == pytest.approx(480 / 500)
+    assert c["kappa"] == pytest.approx(0.355 / 0.455)
+    assert c["compared"] == 20 and c["method"] == "model"
+    assert c["precision_ci"][0] <= c["precision"] <= c["precision_ci"][1]
+
+
+def test_agreement_between_labellers():
+    sheet, key, summary = _labelled_sample()
+    sheet["relevant_2"] = ""
+    sheet.loc[:9, "relevant_2"] = ["1"] * 7 + ["0"] * 3  # disagrees on one paper
+    _, result = evaluate_labels(sheet, key, summary)
+    assert result["labellers"]["papers"] == 10
+    assert result["labellers"]["agreement"] == pytest.approx(0.9)
+
+
+def _filtered(layout):
+    run_filter(layout.raw("cs"), "cs", layout.candidates("cs"), layout.background("cs"),
                layout.filter_summary("cs"), FilterConfig())  # fmt: skip
-    summary = read_json(layout.filter_summary("cs"))
-    sheet, key = make_label_sample(
-        layout.raw("cs"), layout.selected("cs"), summary, n_selected=20, n_per_stratum=5, seed=1
-    )
+    return read_json(layout.filter_summary("cs"))
+
+
+def test_label_sample_is_blind_and_stratified(layout):
+    summary = _filtered(layout)
+    args = (layout.raw("cs"), layout.candidates("cs"), summary)
+    sheet, key = make_label_sample(*args, n_strict=20, n_wide=10, n_per_stratum=5, seed=1)
     assert list(sheet.columns) == ["id", "title", "abstract", "relevant", "notes"]  # no stratum
     assert key["stratum"].value_counts().to_dict() == {
-        "selected": 20, "ai_only": 5, "medicine_only": 5, "neither": 5,
+        "strict": 20, "wide_only": 10, "ai_only": 5, "medicine_only": 5, "neither": 5,
     }  # fmt: skip
     assert sheet["id"].is_unique and set(sheet["id"]) == set(key["id"])
-    again, _ = make_label_sample(
-        layout.raw("cs"), layout.selected("cs"), summary, n_selected=20, n_per_stratum=5, seed=1
-    )
+    again, _ = make_label_sample(*args, n_strict=20, n_wide=10, n_per_stratum=5, seed=1)
     assert again["id"].tolist() == sheet["id"].tolist()
+    # Extending a sheet draws papers that are not in it yet.
+    more, more_key = make_label_sample(
+        *args, n_strict=20, n_wide=10, n_per_stratum=5, seed=1, exclude_ids=set(sheet["id"])
+    )
+    assert not set(more["id"]) & set(sheet["id"])
+    assert more_key["stratum"].value_counts()["wide_only"] == 10  # 40 wide-only candidates
+
+
+def test_label_sample_needs_the_current_keywords(layout):
+    summary = _filtered(layout)
+    summary["keywords"]["ai"] = {"ai": "ai"}
+    with pytest.raises(ValueError, match="run the filter again"):
+        make_label_sample(layout.raw("cs"), layout.candidates("cs"), summary)
 
 
 def test_theme_sample_and_precision(layout):
+    from informatics.selection import selected_papers
     from informatics.validation import evaluate_theme_labels, make_theme_sample
 
-    run_filter(layout.raw("cs"), "cs", layout.selected("cs"), layout.background("cs"),
-               layout.filter_summary("cs"), FilterConfig())  # fmt: skip
-    sheet = make_theme_sample(layout.selected("cs"), per_theme=5, seed=1)
+    _filtered(layout)
+    papers, _ = selected_papers(layout, "cs", "keywords")
+    sheet = make_theme_sample(papers, per_theme=5, seed=1)
     assert list(sheet.columns) == [
         "theme",
         "id",
@@ -101,3 +151,30 @@ def test_theme_sample_and_precision(layout):
     table = evaluate_theme_labels(sheet).set_index("theme")
     assert table.loc["bias", "precision"] == pytest.approx(0.6)
     assert table.loc["privacy", "precision"] == 1.0 and table.loc["legal", "labelled"] == 0
+
+
+def test_random_theme_audit_measures_recall():
+    from informatics.validation import evaluate_theme_audit, make_random_theme_sample
+
+    papers = pd.DataFrame(
+        {"id": ["a", "b", "c", "d"], "title": "t", "abstract": "x", "themes": [[]] * 4}
+    )
+    sheet = make_random_theme_sample(papers, n=4, seed=0).set_index("id")
+    assert list(sheet.columns) == ["title", "abstract", "themes", "done", "notes"]
+    sheet.loc[["a", "b", "c"], "done"] = "1"  # d not read yet
+    sheet.loc["a", "themes"] = "privacy; bias"
+    sheet.loc["b", "themes"] = "privacy"
+    sheet = sheet.reset_index()
+    tagged = {
+        "keywords": pd.Series({"a": ["privacy"], "b": [], "c": ["bias"], "d": ["privacy"]}),
+        "llm": pd.Series({"a": ["privacy", "bias"], "b": ["privacy"]}),  # c not classified
+    }
+    table = evaluate_theme_audit(sheet, tagged).set_index(["method", "theme"])
+    privacy = table.loc[("keywords", "privacy")]
+    assert (privacy["papers"], privacy["discussing"], privacy["tagged"]) == (3, 2, 1)
+    assert privacy["precision"] == 1.0 and privacy["recall"] == pytest.approx(0.5)
+    assert table.loc[("keywords", "bias"), "precision"] == pytest.approx(0.0)
+    assert table.loc[("llm", "privacy"), "recall"] == 1.0
+    assert table.loc[("llm", "bias"), "papers"] == 2
+    with pytest.raises(ValueError, match="unknown theme"):
+        evaluate_theme_audit(sheet.assign(themes="privcy"), tagged)

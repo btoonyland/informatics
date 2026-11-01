@@ -36,11 +36,12 @@ DEFAULT_K_CANDIDATES = (5, 8, 10, 12, 15, 20, 25, 30)
 
 
 class TermAnalyzer:
-    """scikit-learn analyzer: normalised words and two-word phrases, minus selection keywords."""
+    """scikit-learn analyzer: normalised words and two-word phrases. Selection keywords are left
+    out by default, because every selected paper contains them."""
 
-    def __init__(self, normalizer: Normalizer):
+    def __init__(self, normalizer: Normalizer, drop_selection_terms: bool = True):
         self.normalizer = normalizer
-        self.drop = selection_keys(normalizer)
+        self.drop = selection_keys(normalizer) if drop_selection_terms else set()
 
     def __call__(self, text: str) -> list[str]:
         return [k for k, _ in self.normalizer.phrase_pairs(text, 1, 2) if k not in self.drop]

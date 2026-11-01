@@ -23,7 +23,7 @@ def _filter(layout, set_name="cs"):
     run_filter(
         layout.raw(set_name),
         set_name,
-        layout.selected(set_name),
+        layout.candidates(set_name),
         layout.background(set_name),
         layout.filter_summary(set_name),
         FilterConfig(background_size=100),
@@ -100,8 +100,11 @@ def test_end_to_end_outputs(layout, corpus):
         "## Publication",
         "### Rising phrases",
         "3 withdrawn, 2 not in English",
+        "selected by the keyword rule",
     ):
         assert section in report
+    assert info["selection"]["cs"]["method"] == "keywords"
+    assert info["selection"]["cs"]["duplicates_dropped"] == 3
 
 
 def test_text_cache_is_reused(layout):
@@ -183,17 +186,24 @@ def test_default_periods():
 
 
 def test_papers_by_year_shares():
-    papers = pd.DataFrame({"year": pd.array([2020, 2020, 2021], dtype="Int16")})
+    papers = pd.DataFrame(
+        {
+            "year": pd.array([2020, 2020, 2021, 2021], dtype="Int16"),
+            "corpora": [["cs"], ["cs", "q-bio"], ["cs"], ["q-bio"]],
+        }
+    )
     by_year = {
-        "2019": {"scanned": 5, "ai": 0},
-        "2020": {"scanned": 10, "ai": 4, "selected": 2},
-        "2021": {"scanned": 4, "ai": 2, "selected": 1},
+        "2019": {"scanned": 5, "candidates": 0},
+        "2020": {"scanned": 10, "candidates": 4},
+        "2021": {"scanned": 4, "candidates": 2},
     }
-    summaries = {"cs": {"by_year": by_year}}
+    summaries = {"cs": {"by_year": by_year}, "q-bio": None}
     table = papers_by_year(papers, summaries).set_index("year")
     assert table.loc[2020, "selected"] == 2 and table.loc[2019, "selected"] == 0
+    assert table.loc[2021, "selected"] == 2 and table.loc[2021, "cs_selected"] == 1
     assert table.loc[2020, "cs_selected_share"] == pytest.approx(0.2)
     assert table.loc[2021, "cs_selected_share"] == pytest.approx(0.25)
+    assert table.loc[2020, "cs_candidates"] == 4
 
 
 def test_missing_input_has_helpful_error(layout):

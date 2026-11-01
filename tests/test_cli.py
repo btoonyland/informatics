@@ -35,22 +35,62 @@ def test_pipeline_through_the_cli(layout, monkeypatch, capsys):
                  "--k-candidates", "2,3,4,5"]) == 0  # fmt: skip
     assert Path("results/cs/report.md").exists()
 
-    assert main(["label-sample", "--set", "cs", "--n-selected", "10", "--n-per-stratum", "3"]) == 0
+    assert main(["label-sample", "--set", "cs", "--n-strict", "10", "--n-wide", "4",
+                 "--n-per-stratum", "3"]) == 0  # fmt: skip
     sheet_path = Path("labels/cs_to_label.csv")
     sheet = pd.read_csv(sheet_path, dtype=str, keep_default_na=False)
     sheet["relevant"] = "1"
     sheet.to_csv(sheet_path, index=False)
     # Hand-labelled work is never overwritten without --force.
     assert main(["label-sample", "--set", "cs"]) == 1
-    assert "use --force" in capsys.readouterr().err
+    assert "use --extend" in capsys.readouterr().err
     assert pd.read_csv(sheet_path, dtype=str)["relevant"].eq("1").all()
+    # --extend adds papers and keeps the labels.
+    assert main(["label-sample", "--set", "cs", "--extend", "--n-strict", "2", "--n-wide", "2",
+                 "--n-per-stratum", "0"]) == 0  # fmt: skip
+    extended = pd.read_csv(sheet_path, dtype=str, keep_default_na=False)
+    assert len(extended) == len(sheet) + 4 and extended["id"].is_unique
+    assert (extended["relevant"] == "1").sum() == len(sheet)
 
     assert main(["label-evaluate", "--set", "cs"]) == 0
-    assert "Precision: 100.0%" in capsys.readouterr().out
+    assert "Keyword rule: precision 100.0%" in capsys.readouterr().out
     assert Path("labels/cs_evaluation.json").exists()
 
-    assert main(["to-csv", "data/interim/cs_ai_medicine.parquet"]) == 0
-    assert Path("data/interim/cs_ai_medicine.csv").exists()
+    assert main(["to-csv", "data/interim/cs_candidates.parquet"]) == 0
+    assert Path("data/interim/cs_candidates.csv").exists()
+
+
+def test_classifier_through_the_cli(layout, corpus, monkeypatch, capsys):
+    monkeypatch.chdir(layout.data_dir.parent)
+    assert main(["filter", "--set", "cs"]) == 0
+    assert main(["classify", "--set", "cs"]) == 1  # nothing labelled yet
+    assert "label-sample" in capsys.readouterr().err
+    assert main(["label-sample", "--set", "cs", "--n-strict", "40", "--n-wide", "30",
+                 "--n-per-stratum", "5"]) == 0  # fmt: skip
+    sheet_path = Path("labels/cs_to_label.csv")
+    sheet = pd.read_csv(sheet_path, dtype=str, keep_default_na=False)
+    kinds = corpus.set_index("id")["kind"]
+    relevant = kinds[sheet["id"]].isin(["ai_medicine", "duplicate", "wide_relevant"])
+    sheet["relevant"] = relevant.map({True: "1", False: "0"}).to_numpy()
+    sheet.to_csv(sheet_path, index=False)
+
+    assert main(["classify", "--set", "cs", "--folds", "3"]) == 0
+    assert "Cross-validated precision" in capsys.readouterr().out
+    decisions = pd.read_parquet("data/interim/cs_relevance.parquet").set_index("id")
+    selected = decisions.index[decisions["relevant"]]
+    # The kept copy of a re-posted paper can be either one, hence "duplicate".
+    assert {"ai_medicine", "wide_relevant"} <= set(kinds[selected])
+    assert set(kinds[selected]) <= {"ai_medicine", "duplicate", "wide_relevant"}
+
+    assert main(["label-evaluate", "--set", "cs"]) == 0
+    assert "Classifier (model): precision" in capsys.readouterr().out
+    assert main(["analyze", "--set", "cs", "--min-df", "3", "--cluster-min-df", "3",
+                 "--k", "4"]) == 0  # fmt: skip
+    report = Path("results/cs/report.md").read_text(encoding="utf-8")
+    assert "selected by a classifier trained on" in report
+    assert main(["analyze", "--set", "cs", "--selection", "keywords", "--min-df", "3",
+                 "--cluster-min-df", "3", "--k", "4"]) == 0  # fmt: skip
+    assert "selected by the keyword rule" in Path("results/cs/report.md").read_text()
 
 
 def test_missing_input_returns_error_code(tmp_path, monkeypatch, capsys):

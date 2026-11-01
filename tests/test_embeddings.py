@@ -47,10 +47,10 @@ def test_missing_dependency_has_install_hint():
 
 
 def test_analysis_clusters_on_cached_embeddings(layout):
-    run_filter(layout.raw("cs"), "cs", layout.selected("cs"), layout.background("cs"),
+    run_filter(layout.raw("cs"), "cs", layout.candidates("cs"), layout.background("cs"),
                layout.filter_summary("cs"), FilterConfig())  # fmt: skip
-    selected = read_parquet(layout.selected("cs"))
-    selected = selected[selected["duplicate_of"].isna()]
+    selected = read_parquet(layout.candidates("cs"))
+    selected = selected[selected["duplicate_of"].isna() & selected["keyword_rule"]]
     texts = [
         embedding_text(t, a) for t, a in zip(selected["title"], selected["abstract"], strict=True)
     ]

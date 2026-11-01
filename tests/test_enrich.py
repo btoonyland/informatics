@@ -111,9 +111,10 @@ def test_analysis_reports_openalex_data(layout):
     from informatics.filtering import FilterConfig, run_filter
     from informatics.storage import read_parquet, write_parquet
 
-    run_filter(layout.raw("cs"), "cs", layout.selected("cs"), layout.background("cs"),
+    run_filter(layout.raw("cs"), "cs", layout.candidates("cs"), layout.background("cs"),
                layout.filter_summary("cs"), FilterConfig())  # fmt: skip
-    ids = read_parquet(layout.selected("cs"))["id"].tolist()
+    candidates = read_parquet(layout.candidates("cs"))
+    ids = candidates.loc[candidates["keyword_rule"], "id"].tolist()
     n = len(ids)
     enriched = pd.DataFrame(
         {

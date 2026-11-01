@@ -39,7 +39,9 @@ from informatics.phrases import (
     log_odds,
     surface_forms,
 )
+from informatics.records import title_and_abstract
 from informatics.report import render_report
+from informatics.selection import selected_papers
 from informatics.stats import wilson_interval
 from informatics.storage import (
     read_json,
@@ -90,6 +92,7 @@ class AnalysisConfig:
     earlier: tuple[int, int] | None = None
     embeddings: str | None = None  # model whose vectors `informatics embed` cached
     use_cache: bool = True
+    selection: str = "auto"  # see selection.py: auto, keywords or relevance
 
 
 def combine(frames: list[pd.DataFrame]) -> pd.DataFrame:
@@ -102,19 +105,22 @@ def combine(frames: list[pd.DataFrame]) -> pd.DataFrame:
     return df.sort_values("id").reset_index(drop=True)
 
 
-def paper_texts(df: pd.DataFrame) -> list[str]:
-    return (df["title"].fillna("") + ". " + df["abstract"].fillna("")).tolist()
+paper_texts = title_and_abstract
 
 
 def papers_by_year(papers: pd.DataFrame, summaries: dict[str, dict | None]) -> pd.DataFrame:
-    """Selected papers per year and, per set, the share of all scanned papers they represent."""
-    columns = [papers["year"].dropna().astype(int).value_counts().rename("selected")]
+    """Selected papers per year and, per set, how many papers the set had that year, how many
+    were candidates, and the share of all its papers that were selected."""
+    years = papers["year"].astype("Float64")
+    columns = [years.dropna().astype(int).value_counts().rename("selected")]
     names = [n for n, s in summaries.items() if s]
     for name in names:
         by_year = pd.DataFrame.from_dict(summaries[name]["by_year"], orient="index")
         by_year.index = by_year.index.astype(int)
-        by_year = by_year.reindex(columns=["scanned", "ai", "selected"]).fillna(0).astype(int)
-        columns.append(by_year.add_prefix(f"{name}_"))
+        by_year = by_year.reindex(columns=["scanned", "candidates"]).fillna(0).astype(int)
+        in_set = papers["corpora"].map(lambda c, n=name: n in c)
+        selected = years[in_set].dropna().astype(int).value_counts().rename("selected")
+        columns.append(pd.concat([by_year, selected], axis=1).add_prefix(f"{name}_"))
     table = pd.concat(columns, axis=1).fillna(0).astype(int).sort_index()
     for name in names:
         scanned = table[f"{name}_scanned"].replace(0, np.nan)
@@ -216,14 +222,11 @@ def run_analysis(
     config = config or AnalysisConfig()
     out_dir = Path(out_dir) if out_dir else layout.results(sets)
 
-    frames, backgrounds, enriched, summaries, inputs = [], [], [], {}, {}
+    frames, backgrounds, enriched, summaries, inputs, selections = [], [], [], {}, {}, {}
     for name in sets:
-        selected_path = layout.selected(name)
-        if not selected_path.exists():
-            raise FileNotFoundError(
-                f"{selected_path} not found; run `informatics filter --set {name}` first"
-            )
-        frames.append(read_parquet(selected_path))
+        chosen, selection = selected_papers(layout, name, config.selection)
+        frames.append(chosen)
+        selections[name] = selection.as_dict()
         summary_path = layout.filter_summary(name)
         summaries[name] = read_json(summary_path) if summary_path.exists() else None
         background_path = layout.background(name)
@@ -233,16 +236,14 @@ def run_analysis(
         if layout.openalex(name).exists():
             enriched.append(read_parquet(layout.openalex(name)))
         inputs[name] = {
-            "selected": str(selected_path),
+            "candidates": str(layout.candidates(name)),
+            "relevance": (str(layout.relevance(name)) if selection.method == "relevance" else None),
             "background": str(background_path) if use_bg else None,
             "openalex": str(layout.openalex(name)) if layout.openalex(name).exists() else None,
         }
 
     papers = combine(frames)
-    duplicates = papers["duplicate_of"].notna() if "duplicate_of" in papers else None
-    n_duplicates = int(duplicates.sum()) if duplicates is not None else 0
-    if n_duplicates:
-        papers = papers[~duplicates].reset_index(drop=True)
+    n_duplicates = sum(s["duplicates_dropped"] for s in selections.values())
     if papers.empty:
         raise ValueError("there are no selected papers to analyse")
     papers["corpus_group"] = papers["corpora"].map("+".join)
@@ -377,6 +378,7 @@ def run_analysis(
         "normalization_version": NORMALIZATION_VERSION,
         "git_commit": _git_commit(),
         "sets": sets,
+        "selection": selections,
         "inputs": inputs,
         "config": asdict(config),
         "periods": {"earlier": periods[0], "recent": periods[1]} if periods else None,
@@ -436,6 +438,7 @@ def run_analysis(
             "sets": sets,
             "papers": papers,
             "summaries": summaries,
+            "selections": selections,
             "run_info": run_info,
             "n_background": n_background,
             "year_table": year_table,

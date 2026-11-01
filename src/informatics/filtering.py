@@ -1,17 +1,27 @@
-"""Select AI-in-medicine papers, and keep a sample of AI-only papers to compare them against.
+"""Find candidate AI-in-medicine papers with a wide keyword net, and keep a sample of AI-only
+papers to compare them against.
+
+Selection has two stages. This module is the first: a deliberately wide keyword net
+(``keywords.py``) that should miss few relevant papers. The second stage (selection.py) decides
+which candidates are really about AI in medicine: the original keyword rule, a classifier
+trained on hand labels (relevance.py) or a language model given a written rubric (llm.py).
 
 Runs on the CPU with pandas, reading the raw file in chunks. Every paper is assigned to exactly
-one stratum (used both for the summary and for measuring the filter, see ``validation.py``):
+one stratum, used in the summary and for measuring each stage (validation.py):
 
-* ``selected``        enough AI hits and enough medicine hits
-* ``ai_only``         AI terms but no medicine terms (the comparison set is sampled from these)
-* ``medicine_only``   medicine terms but no AI terms
-* ``neither``         no terms at all
-* ``below_threshold`` both kinds of terms, but fewer than ``--min-*-hits`` requires
-* ``excluded``        withdrawn, or (among papers with AI terms) not written in English
+* ``strict``         meets the original keyword rule (enough AI and medicine keyword hits)
+* ``wide_only``      has an AI term and a medicine term from the wider lists, but does not meet
+                     the original rule
+* ``ai_only``        AI terms but no medicine terms (the comparison sample comes from these)
+* ``medicine_only``  medicine terms but no AI terms
+* ``neither``        no terms at all
+* ``excluded``       withdrawn, or not written in English (language is only checked for
+                     candidates and for papers that could join the comparison sample)
 
-Selected papers are also checked for near-duplicates (the same paper under two IDs); the extra
-copies stay in the file with ``duplicate_of`` set and are left out of the analysis.
+``strict`` and ``wide_only`` papers are the candidates. They are written to
+``data/interim/<set>_candidates.parquet``, where ``keyword_rule`` tells the two apart.
+Candidates are also checked for near-duplicates (the same paper under two IDs). The extra copies
+stay in the file with ``duplicate_of`` set and are left out of the analysis.
 """
 
 from __future__ import annotations
@@ -28,22 +38,25 @@ import pyarrow as pa
 
 from informatics import keywords
 from informatics.cleaning import is_non_english, is_withdrawn, near_duplicates
+from informatics.normalize import clean_characters
 from informatics.records import RAW_SCHEMA
 from informatics.storage import iter_parquet, write_json, write_parquet
 
 log = logging.getLogger(__name__)
 
-STRATA = ("selected", "ai_only", "medicine_only", "neither", "below_threshold", "excluded")
-# Strata whose relevant papers count as missed by the keyword rule (see validation.py).
-MISSED_STRATA = ("ai_only", "medicine_only", "neither", "below_threshold")
+STRATA = ("strict", "wide_only", "ai_only", "medicine_only", "neither", "excluded")
+CANDIDATE_STRATA = ("strict", "wide_only")
+# Relevant papers in these strata are missed by the wide net (see validation.py).
+OUTSIDE_STRATA = ("ai_only", "medicine_only", "neither")
 _STR_LIST = pa.list_(pa.string())
-SELECTED_SCHEMA = pa.schema(
+CANDIDATE_SCHEMA = pa.schema(
     list(RAW_SCHEMA)
     + [
-        pa.field("ai_terms", _STR_LIST),
-        pa.field("ai_hits", pa.int32()),
+        pa.field("ai_terms", _STR_LIST),  # every AI term found, from both lists
+        pa.field("ai_hits", pa.int32()),  # occurrences of the original AI keywords
         pa.field("medicine_terms", _STR_LIST),
         pa.field("medicine_hits", pa.int32()),
+        pa.field("keyword_rule", pa.bool_()),  # meets the original rule (stratum "strict")
         pa.field("themes", _STR_LIST),
         pa.field("theme_terms", _STR_LIST),
         pa.field("duplicate_of", pa.string()),
@@ -62,36 +75,31 @@ BACKGROUND_SCHEMA = pa.schema(
 
 @dataclass(frozen=True)
 class FilterConfig:
-    min_ai_hits: int = 1
+    min_ai_hits: int = 1  # the original keyword rule
     min_medicine_hits: int = 1
     background_size: int = 50_000
     seed: int = 42
     batch_size: int = 100_000
 
+    def __post_init__(self) -> None:
+        if self.min_ai_hits < 1 or self.min_medicine_hits < 1:
+            raise ValueError("--min-ai-hits and --min-medicine-hits must be at least 1")
+
 
 def search_text(df: pd.DataFrame) -> pd.Series:
-    """Title and abstract, lower-cased: the text every keyword is matched against."""
-    return (df["title"].fillna("") + ". " + df["abstract"].fillna("")).str.lower()
+    """Title and abstract with TeX and odd characters cleaned (normalize.clean_characters),
+    lower-cased: the text every keyword, theme and concept is matched against."""
+    raw = df["title"].fillna("") + ". " + df["abstract"].fillna("")
+    return raw.map(clean_characters).str.lower()
 
 
 def _distinct(hits: list[str]) -> list[str]:
     return list(dict.fromkeys(hits))
 
 
-def assign_strata(ai_hits: pd.Series, medicine_hits: pd.Series, config: FilterConfig) -> pd.Series:
-    conditions = [
-        (ai_hits >= config.min_ai_hits) & (medicine_hits >= config.min_medicine_hits),
-        (ai_hits >= 1) & (medicine_hits == 0),
-        (medicine_hits >= 1) & (ai_hits == 0),
-        (ai_hits == 0) & (medicine_hits == 0),
-    ]
-    labels = np.select(conditions, STRATA[:4], default="below_threshold")
-    return pd.Series(labels, index=ai_hits.index, dtype=object)
-
-
-def exclusion_reason(df: pd.DataFrame, ai_hits: pd.Series) -> pd.Series:
-    """ "withdrawn", "non-english" or None. Language is only checked for papers with AI terms (the
-    only ones that can be selected or sampled), which keeps the filter fast."""
+def exclusion_reason(df: pd.DataFrame, check_language: pd.Series) -> pd.Series:
+    """ "withdrawn", "non-english" or None. Language is only checked where ``check_language``
+    is true (candidates and possible comparison papers), which keeps the filter fast."""
     comments = df["comments"] if "comments" in df else pd.Series(None, index=df.index)
     reason = pd.Series(
         [
@@ -101,7 +109,7 @@ def exclusion_reason(df: pd.DataFrame, ai_hits: pd.Series) -> pd.Series:
         index=df.index,
         dtype=object,
     )
-    check = reason.isna() & (ai_hits >= 1)
+    check = reason.isna() & check_language
     if check.any():
         raw = df.loc[check, "title"].fillna("") + ". " + df.loc[check, "abstract"].fillna("")
         reason.loc[check] = raw.map(lambda t: "non-english" if is_non_english(t) else None)
@@ -109,18 +117,33 @@ def exclusion_reason(df: pd.DataFrame, ai_hits: pd.Series) -> pd.Series:
 
 
 def annotate(df: pd.DataFrame, config: FilterConfig) -> pd.DataFrame:
-    """Matched AI/medicine terms, hit counts, exclusion reason and stratum for each paper."""
+    """Matched terms, hit counts, keyword rule, exclusion reason and stratum for each paper."""
     text = search_text(df)
-    ai = text.map(keywords.AI.hits)
-    medicine = text.map(keywords.MEDICINE.hits)
+    strict_ai, strict_med = text.map(keywords.AI.hits), text.map(keywords.MEDICINE.hits)
+    wide_ai = text.map(keywords.AI_CONTEXT.hits)
+    wide_med = text.map(keywords.MEDICINE_CONTEXT.hits)
     out = pd.DataFrame(index=df.index)
-    out["ai_terms"] = ai.map(_distinct)
-    out["ai_hits"] = ai.map(len).astype("int32")
-    out["medicine_terms"] = medicine.map(_distinct)
-    out["medicine_hits"] = medicine.map(len).astype("int32")
-    out["exclusion"] = exclusion_reason(df, out["ai_hits"])
-    strata = assign_strata(out["ai_hits"], out["medicine_hits"], config)
-    out["stratum"] = strata.where(out["exclusion"].isna(), "excluded")
+    out["ai_terms"] = [_distinct(a + b) for a, b in zip(strict_ai, wide_ai, strict=True)]
+    out["ai_hits"] = strict_ai.map(len).astype("int32")
+    out["medicine_terms"] = [_distinct(a + b) for a, b in zip(strict_med, wide_med, strict=True)]
+    out["medicine_hits"] = strict_med.map(len).astype("int32")
+    rule = (out["ai_hits"] >= config.min_ai_hits) & (
+        out["medicine_hits"] >= config.min_medicine_hits
+    )
+    any_ai, any_med = out["ai_terms"].map(bool), out["medicine_terms"].map(bool)
+    stratum = pd.Series(
+        np.select(
+            [rule, any_ai & any_med, any_ai, any_med],
+            ["strict", "wide_only", "ai_only", "medicine_only"],
+            default="neither",
+        ),
+        index=df.index,
+        dtype=object,
+    )
+    out["keyword_rule"] = rule
+    background_eligible = (stratum == "ai_only") & (out["ai_hits"] >= config.min_ai_hits)
+    out["exclusion"] = exclusion_reason(df, stratum.isin(CANDIDATE_STRATA) | background_eligible)
+    out["stratum"] = stratum.where(out["exclusion"].isna(), "excluded")
     return out
 
 
@@ -140,7 +163,7 @@ def _add_year_counts(by_year: dict, column: str, years: pd.Series) -> None:
 def run_filter(
     raw_path: str | Path,
     set_name: str,
-    selected_path: str | Path,
+    candidates_path: str | Path,
     background_path: str | Path,
     summary_path: str | Path,
     config: FilterConfig | None = None,
@@ -150,39 +173,44 @@ def run_filter(
     strata: Counter[str] = Counter()
     exclusions: Counter[str] = Counter()
     by_year: dict[int, Counter[str]] = defaultdict(Counter)
-    selected_parts: list[pd.DataFrame] = []
+    candidate_parts: list[pd.DataFrame] = []
     reservoir: pd.DataFrame | None = None
 
     for chunk in iter_parquet(raw_path, batch_size=config.batch_size):
         chunk = pd.concat([chunk, annotate(chunk, config)], axis=1)
         strata.update(chunk["stratum"].value_counts().to_dict())
         exclusions.update(chunk["exclusion"].dropna().value_counts().to_dict())
-        is_ai = chunk["ai_hits"] >= config.min_ai_hits
-        is_selected = chunk["stratum"] == "selected"
+        kept = chunk["exclusion"].isna()
+        is_candidate = chunk["stratum"].isin(CANDIDATE_STRATA)
         _add_year_counts(by_year, "scanned", chunk["year"])
-        _add_year_counts(by_year, "ai", chunk.loc[is_ai, "year"])
-        _add_year_counts(by_year, "selected", chunk.loc[is_selected, "year"])
-        if is_selected.any():
-            selected_parts.append(tag_themes(chunk[is_selected]))
-        candidates = chunk[(chunk["stratum"] == "ai_only") & is_ai]
-        if config.background_size > 0 and len(candidates):
+        _add_year_counts(by_year, "ai", chunk.loc[kept & (chunk["ai_hits"] > 0), "year"])
+        _add_year_counts(by_year, "candidates", chunk.loc[is_candidate, "year"])
+        _add_year_counts(by_year, "keyword_rule", chunk.loc[chunk["stratum"] == "strict", "year"])
+        if is_candidate.any():
+            candidate_parts.append(tag_themes(chunk[is_candidate]))
+        pool = chunk[(chunk["stratum"] == "ai_only") & (chunk["ai_hits"] >= config.min_ai_hits)]
+        if config.background_size > 0 and len(pool):
             # Reservoir sample: keep the rows with the smallest random keys across all chunks.
-            candidates = candidates.assign(_key=rng.random(len(candidates)))
-            pool = candidates if reservoir is None else pd.concat([reservoir, candidates])
+            pool = pool.assign(_key=rng.random(len(pool)))
+            pool = pool if reservoir is None else pd.concat([reservoir, pool])
             reservoir = pool.sort_values("_key").head(config.background_size)
-        log.info("scanned %d papers: %d selected so far", sum(strata.values()), strata["selected"])
+        log.info(
+            "scanned %d papers: %d candidates so far",
+            sum(strata.values()),
+            strata["strict"] + strata["wide_only"],
+        )
 
-    selected = _finish(selected_parts, SELECTED_SCHEMA, set_name)
-    duplicates = near_duplicates(selected["id"].tolist(), search_text(selected).tolist())
-    selected["duplicate_of"] = selected["id"].map(duplicates).astype(object)
+    candidates = _finish(candidate_parts, CANDIDATE_SCHEMA, set_name)
+    duplicates = near_duplicates(candidates["id"].tolist(), search_text(candidates).tolist())
+    candidates["duplicate_of"] = candidates["id"].map(duplicates).astype(object)
     background = _finish(
         [] if reservoir is None else [reservoir.drop(columns="_key")], BACKGROUND_SCHEMA, set_name
     )
-    write_parquet(selected[SELECTED_SCHEMA.names], selected_path, schema=SELECTED_SCHEMA)
+    write_parquet(candidates[CANDIDATE_SCHEMA.names], candidates_path, schema=CANDIDATE_SCHEMA)
     write_parquet(background[BACKGROUND_SCHEMA.names], background_path, schema=BACKGROUND_SCHEMA)
 
-    theme_counts = selected.loc[selected["duplicate_of"].isna(), "themes"].explode()
-    theme_counts = theme_counts.dropna().value_counts()
+    unique = candidates[candidates["duplicate_of"].isna()]
+    theme_counts = unique.loc[unique["keyword_rule"], "themes"].explode().dropna().value_counts()
     summary = {
         "set": set_name,
         "raw": str(raw_path),
@@ -191,25 +219,25 @@ def run_filter(
         "counts": {
             "scanned": sum(strata.values()),
             **{s: strata.get(s, 0) for s in STRATA},
+            "candidates": strata.get("strict", 0) + strata.get("wide_only", 0),
             "excluded_withdrawn": exclusions.get("withdrawn", 0),
             "excluded_non_english": exclusions.get("non-english", 0),
             "near_duplicates": len(duplicates),
             "background_sample": len(background),
         },
         "by_year": {str(y): dict(by_year[y]) for y in sorted(by_year)},
-        "themes": {str(k): int(v) for k, v in theme_counts.items()},
-        "keywords": {
-            "ai": keywords.AI_TERMS,
-            "medicine": keywords.MEDICINE_TERMS,
-            "themes": {name: asdict(theme) for name, theme in keywords.THEMES.items()},
-        },
+        "themes_keyword_rule": {str(k): int(v) for k, v in theme_counts.items()},
+        "keywords": keywords.keyword_lists(),
     }
     write_json(summary, summary_path)
+    counts = summary["counts"]
     log.info(
-        "%s: %d of %d papers selected; %d AI-only papers kept for comparison",
+        "%s: %d candidates (%d meet the keyword rule) of %d papers; %d AI-only papers kept for "
+        "comparison",
         set_name,
-        len(selected),
-        summary["counts"]["scanned"],
+        counts["candidates"],
+        counts["strict"],
+        counts["scanned"],
         len(background),
     )
     return summary

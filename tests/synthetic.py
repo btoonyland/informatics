@@ -57,6 +57,14 @@ NEITHER = [
     "A consensus protocol tolerates Byzantine faults in distributed ledgers.",
 ]
 BOILERPLATE = "Results are reported for setting {n}."
+# Candidates that only the wide keyword net finds: relevant papers that avoid the original
+# keywords, and unrelated papers that happen to use a wide-net term ("diagnosis" of machines).
+WIDE_RELEVANT = "We train convolutional networks on {a} and {b} to support radiologists."
+WIDE_IRRELEVANT = "We apply gradient boosting to fault diagnosis of {a} and {b}."
+MACHINE_WORDS = [
+    "wind turbines", "rolling bearings", "gearboxes", "power transformers", "jet engines",
+    "conveyor belts", "hydraulic pumps", "railway switches",
+]  # fmt: skip
 NON_ENGLISH = (
     "Nous utilisons le deep learning pour la segmentation des tumeurs chez les patients "
     "hospitalisés. Les résultats montrent une amélioration nette de la précision diagnostique "
@@ -76,7 +84,10 @@ def make_corpus(n_per_topic: int = 40, seed: int = 0) -> pd.DataFrame:
 
     Besides the four kinds, there are 3 withdrawn papers and 2 French abstracts (both must be
     excluded) and 3 re-posts of AI-medicine papers under new IDs (kind "duplicate"). Some
-    AI-medicine papers have a journal reference or an "accepted" comment.
+    AI-medicine papers have a journal reference or an "accepted" comment. Finally,
+    ``n_per_topic // 2`` papers each of kind "wide_relevant" (imaging papers without the
+    original keywords) and "wide_irrelevant" (machine fault diagnosis) are candidates that only
+    the wide keyword net finds.
     """
     rng = np.random.default_rng(seed)
     rows = []
@@ -132,6 +143,13 @@ def make_corpus(n_per_topic: int = 40, seed: int = 0) -> pd.DataFrame:
             comments="This paper has been withdrawn by the authors.")  # fmt: skip
     for _ in range(2):
         add("non_english", "imaging", "Segmentation des tumeurs", NON_ENGLISH)
+    for _ in range(n_per_topic // 2):
+        a, b = rng.choice(TOPIC_WORDS["imaging"], size=2, replace=False)
+        add("wide_relevant", "imaging", f"Convolutional networks for {a}",
+            WIDE_RELEVANT.format(a=a, b=b))  # fmt: skip
+        a, b = rng.choice(MACHINE_WORDS, size=2, replace=False)
+        add("wide_irrelevant", "machines", f"Fault diagnosis of {a}",
+            WIDE_IRRELEVANT.format(a=a, b=b))  # fmt: skip
 
     df = pd.DataFrame(rows)
     truth = df[["id", "kind", "topic"]]

@@ -64,45 +64,87 @@ def test_theme_terms_are_distinct():
     assert keywords.THEME_MATCHER.find("accuracy, accuracy and accuracy")[1] == ["accuracy"]
 
 
-def test_min_hits_creates_below_threshold_stratum():
+@pytest.mark.parametrize(
+    ("text", "ai", "medicine"),
+    [
+        ("convolutional networks for tumour segmentation in mri", True, True),
+        ("a u-net for retinal vessel segmentation", True, True),
+        ("gpt-4 answers usmle questions", True, True),
+        ("random forests predict sepsis in the icu", True, True),
+        ("we fine-tuned bert on discharge summaries", True, True),
+        # Words with a common unrelated sense only count in phrases that fix the sense.
+        ("pen strokes in handwriting", False, False),
+        ("college admissions and partial discharge", False, False),
+        ("this aids the analysis", False, False),
+        ("recurrent stroke after ischemic stroke", False, True),
+    ],
+)
+def test_wide_net_terms(text, ai, medicine):
+    assert bool(keywords.AI.hits(text) + keywords.AI_CONTEXT.hits(text)) is ai
+    assert bool(keywords.MEDICINE.hits(text) + keywords.MEDICINE_CONTEXT.hits(text)) is medicine
+
+
+def test_wide_net_strata():
     df = pd.DataFrame(
         {
-            "title": ["XOR at a single vertex"],
-            "abstract": ["Implications for AI. Medical knowledge aside."],
+            "title": ["XOR at a single vertex", "Convolutional networks", "Gradient boosting"],
+            "abstract": [
+                "Implications for AI. Medical knowledge aside.",
+                "They segment tumours in MRI scans.",
+                "It ranks web pages.",
+            ],
         }
     )
-    assert annotate(df, FilterConfig())["stratum"].tolist() == ["selected"]
-    strict = annotate(df, FilterConfig(min_medicine_hits=2))
-    assert strict["stratum"].tolist() == ["below_threshold"]
+    out = annotate(df, FilterConfig())
+    assert out["stratum"].tolist() == ["strict", "wide_only", "ai_only"]
+    assert out["keyword_rule"].tolist() == [True, False, False]
+    assert out.loc[1, "ai_terms"] == ["network architectures"] and out.loc[1, "ai_hits"] == 0
+    # Raising the bar of the original rule moves a paper to the wide-only candidates.
+    assert annotate(df, FilterConfig(min_medicine_hits=2))["stratum"][0] == "wide_only"
+    with pytest.raises(ValueError, match="at least 1"):
+        FilterConfig(min_ai_hits=0)
+
+
+def test_keywords_match_after_tex_cleanup():
+    df = pd.DataFrame({"title": [r"\emph{Deep‐learning} for \textit{patients}"],
+                       "abstract": [""]})  # fmt: skip
+    out = annotate(df, FilterConfig())
+    assert out.loc[0, "ai_terms"] == ["deep learning"] and out.loc[0, "keyword_rule"]
 
 
 def test_run_filter_on_synthetic_corpus(layout, corpus):
     summary = run_filter(
         layout.raw("cs"),
         "cs",
-        layout.selected("cs"),
+        layout.candidates("cs"),
         layout.background("cs"),
         layout.filter_summary("cs"),
         FilterConfig(background_size=50, batch_size=100),
     )
     kinds = corpus.set_index("id")["kind"]
-    selected = read_parquet(layout.selected("cs"))
+    candidates = read_parquet(layout.candidates("cs"))
     background = read_parquet(layout.background("cs"))
-    # Re-posted papers are selected but flagged; withdrawn and French papers are excluded.
-    assert set(kinds[selected["id"]]) == {"ai_medicine", "duplicate"}
-    assert len(selected) == kinds.isin(["ai_medicine", "duplicate"]).sum()
-    assert selected["duplicate_of"].notna().sum() == (kinds == "duplicate").sum() == 3
+    # Re-posted papers are candidates but flagged; withdrawn and French papers are excluded.
+    strict = candidates[candidates["keyword_rule"]]
+    assert set(kinds[strict["id"]]) == {"ai_medicine", "duplicate"}
+    assert len(strict) == kinds.isin(["ai_medicine", "duplicate"]).sum()
+    wide = candidates[~candidates["keyword_rule"]]
+    assert set(kinds[wide["id"]]) == {"wide_relevant", "wide_irrelevant"}
+    assert candidates["duplicate_of"].notna().sum() == (kinds == "duplicate").sum() == 3
     assert set(kinds[background["id"]]) == {"ai_only"} and len(background) == 50
 
     counts = summary["counts"]
     assert counts["scanned"] == len(corpus)
     assert sum(counts[s] for s in STRATA) == len(corpus)
+    assert counts["candidates"] == len(candidates) == counts["strict"] + counts["wide_only"]
+    assert counts["wide_only"] == kinds.str.startswith("wide_").sum()
     assert counts["excluded_withdrawn"] == 3 and counts["excluded_non_english"] == 2
     assert counts["excluded"] == 5 and counts["near_duplicates"] == 3
     assert sum(y["scanned"] for y in summary["by_year"].values()) == len(corpus)
-    assert summary["keywords"]["ai"]["llm"] == keywords.AI_TERMS["llm"]  # patterns recorded
+    assert sum(y.get("candidates", 0) for y in summary["by_year"].values()) == len(candidates)
+    assert summary["keywords"] == keywords.keyword_lists()  # patterns recorded
 
-    row = selected.iloc[0]
+    row = candidates.iloc[0]
     assert isinstance(row["ai_terms"], list) and isinstance(row["themes"], list)
     assert row["corpus"] == "cs"
     assert json.loads(layout.filter_summary("cs").read_text())["set"] == "cs"
@@ -111,7 +153,14 @@ def test_run_filter_on_synthetic_corpus(layout, corpus):
 def test_background_sample_is_reproducible(layout):
     paths = [layout.background("cs"), layout.data_dir / "bg2.parquet"]
     for path in paths:
-        run_filter(layout.raw("cs"), "cs", layout.selected("cs"), path, layout.filter_summary("cs"),
-                   FilterConfig(background_size=20, batch_size=30))  # fmt: skip
+        config = FilterConfig(background_size=20, batch_size=30)
+        run_filter(
+            layout.raw("cs"),
+            "cs",
+            layout.candidates("cs"),
+            path,
+            layout.filter_summary("cs"),
+            config,
+        )
     first, second = (read_parquet(p)["id"].tolist() for p in paths)
     assert first == second

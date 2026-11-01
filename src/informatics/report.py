@@ -85,17 +85,22 @@ def render_report(ctx: dict) -> str:
 
     # Papers ----------------------------------------------------------------------------------
     out.append("## Papers\n")
+    selections = ctx.get("selections", {})
     for name in sets:
-        summary = summaries.get(name)
+        summary, selection = summaries.get(name), selections.get(name)
         if summary:
-            c, cfg = summary["counts"], summary["config"]
+            c = summary["counts"]
             out.append(
-                f"- **{name}**: {c['selected']:,} of {c['scanned']:,} papers selected "
-                f"({pct(c['selected'] / max(c['scanned'], 1))}), requiring at least "
-                f"{cfg['min_ai_hits']} AI and {cfg['min_medicine_hits']} medicine keyword "
-                f"hit(s) in title + abstract. Excluded before selection: "
-                f"{c.get('excluded_withdrawn', 0):,} withdrawn, "
+                f"- **{name}**: {c['candidates']:,} of {c['scanned']:,} papers are candidates: "
+                "their title or abstract has an AI term and a medicine term from the wide "
+                f"keyword lists ({c['strict']:,} of them meet the original keyword rule). "
+                f"Excluded first: {c.get('excluded_withdrawn', 0):,} withdrawn, "
                 f"{c.get('excluded_non_english', 0):,} not in English."
+            )
+        if selection:
+            out.append(
+                f"  {selection['selected']:,} of the {selection['candidates']:,} distinct "
+                f"candidates were selected by {selection['description']}."
             )
     out.append(
         f"- Analysed together: **{counts['papers']:,} papers** after dropping "
@@ -107,9 +112,10 @@ def render_report(ctx: dict) -> str:
         "keywords but no medicine keyword."
     )
     out.append(
-        "- The keyword rule's precision and recall are unknown until a labelled sample is "
-        "evaluated (`informatics label-sample` / `label-evaluate`; for themes, "
-        "`label-themes-sample` / `label-themes-evaluate`).\n"
+        "- How many selected papers are really about AI in medicine, and how many relevant "
+        "papers were missed, is only known from a hand-labelled sample: `informatics "
+        "label-sample` / `label-evaluate` measure the keyword rule, the wide net and the "
+        "classifier; `label-themes-sample` / `label-themes-evaluate` measure the themes.\n"
     )
     out.append("### Papers per year\n")
     out.append("Years come from the arXiv identifier (month of first submission).\n")

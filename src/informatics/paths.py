@@ -23,15 +23,30 @@ class Layout:
     def harvest_dir(self, set_name: str) -> Path:
         return self.data_dir / "raw" / f"{slug(set_name)}_harvest"
 
-    # data/interim: output of the keyword filter
-    def selected(self, set_name: str) -> Path:
-        return self.data_dir / "interim" / f"{slug(set_name)}_ai_medicine.parquet"
+    # data/interim: output of the keyword filter (the wide net) ...
+    def candidates(self, set_name: str) -> Path:
+        return self.data_dir / "interim" / f"{slug(set_name)}_candidates.parquet"
 
     def background(self, set_name: str) -> Path:
         return self.data_dir / "interim" / f"{slug(set_name)}_ai_only_sample.parquet"
 
     def filter_summary(self, set_name: str) -> Path:
         return self.data_dir / "interim" / f"{slug(set_name)}_filter_summary.json"
+
+    # ... and of the second selection stage (informatics classify)
+    def relevance(self, set_name: str) -> Path:
+        return self.data_dir / "interim" / f"{slug(set_name)}_relevance.parquet"
+
+    def relevance_info(self, set_name: str) -> Path:
+        return self.data_dir / "interim" / f"{slug(set_name)}_relevance.json"
+
+    def llm(self, set_name: str) -> Path:
+        """Language-model answers (relevance and themes) for each candidate."""
+        return self.data_dir / "interim" / f"{slug(set_name)}_llm.parquet"
+
+    def llm_batches(self, set_name: str) -> Path:
+        """Message batches submitted for a set, so an interrupted run can resume."""
+        return self.data_dir / "interim" / f"{slug(set_name)}_llm_batches.json"
 
     def openalex(self, set_name: str) -> Path:
         return self.data_dir / "interim" / f"{slug(set_name)}_openalex.parquet"

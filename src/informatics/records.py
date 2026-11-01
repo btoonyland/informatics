@@ -37,7 +37,6 @@ TEXT_COLUMNS = [
     "id", "title", "abstract", "created", "updated", "doi",
     "journal_ref", "comments", "license", "datestamp", "source",
 ]  # fmt: skip
-LIST_COLUMNS = ["authors", "categories"]
 
 
 def clean_text(value: Any) -> str | None:
@@ -134,3 +133,8 @@ def date_year_month(value: Any) -> tuple[int, int | None] | None:
         return None
     month = int(match.group(2)) if match.group(2) else None
     return int(match.group(1)), month if month and 1 <= month <= 12 else None
+
+
+def title_and_abstract(df: pd.DataFrame) -> list[str]:
+    """ "Title. Abstract" for each paper: the text every later step works on."""
+    return (df["title"].fillna("") + ". " + df["abstract"].fillna("")).tolist()
