@@ -1,5 +1,9 @@
-# Downloaded and intermediate data (large; regenerate with the pipeline)
-data/
+# Downloaded and intermediate data (large; regenerate with the pipeline). The small pointer
+# files DVC writes for the raw data (data/raw/*.dvc, see dvc.yaml) are committed.
+data/*
+!data/raw/
+data/raw/*
+!data/raw/*.dvc
 
 # Per-paper result tables can be large; summary tables next to them are committed
 results/**/papers.parquet

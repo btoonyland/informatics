@@ -1,0 +1,15 @@
+# Settings for the DVC pipeline in dvc.yaml (`dvc repro` re-runs what a change affects).
+sets: [cs, q-bio]  # each is filtered and analysed on its own
+compare: cs,q-bio  # analysed together; also update the deps of the compare stage in dvc.yaml
+
+filter:
+  min_ai_hits: 1  # the original keyword rule
+  min_medicine_hits: 1
+  background_size: 50000
+  seed: 42
+
+analyze:
+  selection: keywords  # keywords, or relevance once `informatics classify` has run
+  themes: keywords  # keywords, or llm after `informatics classify --method llm`
+  min_df: 5
+  seed: 42

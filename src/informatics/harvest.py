@@ -203,3 +203,39 @@ def list_sets(base_url: str = DEFAULT_BASE_URL, client: HttpClient | None = None
         if token_el is None or not (token_el.text or "").strip():
             return sets
         query = {"verb": "ListSets", "resumptionToken": token_el.text.strip()}
+
+
+def latest_datestamp(raw_path: str | Path) -> str | None:
+    """The newest OAI datestamp (last metadata change) in a raw file, as YYYY-MM-DD."""
+    stamps = pq.read_table(raw_path, columns=["datestamp"]).column("datestamp").to_pylist()
+    stamps = [s[:10] for s in stamps if s]
+    return max(stamps) if stamps else None
+
+
+def merge_update(raw_path: str | Path, update: pd.DataFrame, batch_size: int = 100_000) -> dict:
+    """Merge newly harvested records into a raw file: changed papers replace their old version
+    and new papers are added. Streams the raw file, so memory stays flat. Returns counts."""
+    raw_path = Path(raw_path)
+    update = normalize_records(update).drop_duplicates("id", keep="last")
+    new_ids = set(update["id"])
+    tmp = raw_path.with_name(f".{raw_path.name}.merge.tmp")
+    kept = replaced = 0
+    writer = pq.ParquetWriter(tmp, RAW_SCHEMA)
+    try:
+        for batch in pq.ParquetFile(raw_path).iter_batches(batch_size=batch_size):
+            chunk = batch.to_pandas()
+            changed = chunk["id"].isin(new_ids)
+            replaced += int(changed.sum())
+            kept += int((~changed).sum())
+            writer.write_table(
+                pa.Table.from_pandas(chunk[~changed], schema=RAW_SCHEMA, preserve_index=False)
+            )
+        writer.write_table(pa.Table.from_pandas(update, schema=RAW_SCHEMA, preserve_index=False))
+    finally:
+        writer.close()
+    tmp.replace(raw_path)
+    return {
+        "updated": replaced,
+        "added": len(update) - replaced,
+        "total": kept + len(update),
+    }

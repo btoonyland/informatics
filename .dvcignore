@@ -1,0 +1,3 @@
+# Python bytecode changes whenever code runs; it must not count as a change of src/
+__pycache__/
+*.pyc

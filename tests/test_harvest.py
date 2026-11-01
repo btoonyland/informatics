@@ -1,6 +1,7 @@
 import json
 import xml.etree.ElementTree as ET
 
+import pandas as pd
 import pytest
 import requests
 from helpers import FakeResponse, client_for, fixture_bytes, oai_error, ok
@@ -111,3 +112,41 @@ def test_list_sets():
         ("cs", "Computer Science"),
         ("q-bio", "Quantitative Biology"),
     ]
+
+
+def _raw_from_page(path, page: str) -> None:
+    from informatics.records import RAW_SCHEMA, normalize_records
+    from informatics.storage import write_parquet
+
+    records, _, _ = parse_page(ET.fromstring(fixture_bytes(page)))
+    write_parquet(normalize_records(pd.DataFrame(records), "oai-pmh"), path, schema=RAW_SCHEMA)
+
+
+def test_merge_update_replaces_changed_and_adds_new(tmp_path):
+    from informatics.harvest import latest_datestamp, merge_update
+
+    raw = tmp_path / "cs.parquet"
+    _raw_from_page(raw, "oai_page1.xml")
+    assert latest_datestamp(raw) == "2015-02-01"
+    newer, _, _ = parse_page(ET.fromstring(fixture_bytes("oai_page2.xml")))
+    counts = merge_update(raw, pd.DataFrame(newer))
+    assert counts == {"updated": 1, "added": 1, "total": 3}
+    df = read_parquet(raw).set_index("id")
+    assert sorted(df.index) == ["0901.0001", "1501.00010", "cs/0601001"]
+    assert df.loc["0901.0001", "datestamp"] == "2011-03-04"  # the newer version
+
+
+def test_update_through_the_cli(tmp_path, monkeypatch, capsys):
+    from informatics.cli import main
+    from informatics.storage import read_json
+
+    monkeypatch.chdir(tmp_path)
+    _raw_from_page(tmp_path / "data/raw/cs.parquet", "oai_page1.xml")
+    client = client_for([ok(fixture_bytes("oai_page2.xml"))])
+    monkeypatch.setattr("informatics.harvest.HttpClient", lambda: client)
+    assert main(["update", "--set", "cs", "--delay", "0"]) == 0
+    assert "1 new and 1 changed records since 2015-02-01" in capsys.readouterr().out
+    assert client.session.calls[0]["from"] == "2015-02-01"  # only what changed since then
+    assert len(read_parquet("data/raw/cs.parquet")) == 3
+    (update,) = read_json("data/raw/cs_import.json")["updates"]
+    assert update["from"] == "2015-02-01" and update["added"] == 1

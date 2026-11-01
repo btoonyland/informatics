@@ -1,0 +1,92 @@
+# Reproducible pipeline for DVC (https://dvc.org); settings are in params.yaml.
+#
+#   pip install dvc && dvc init          once
+#   dvc add data/raw/cs.parquet          after every harvest, import or `informatics update`
+#   dvc repro                            re-runs the steps whose inputs or settings changed
+#
+# DVC records a hash of every input and output in dvc.lock; commit it with the results.
+stages:
+  filter:
+    foreach: ${sets}
+    do:
+      cmd: >-
+        informatics filter --set ${item} --background-size ${filter.background_size}
+        --seed ${filter.seed} --min-ai-hits ${filter.min_ai_hits}
+        --min-medicine-hits ${filter.min_medicine_hits}
+      deps:
+        - data/raw/${item}.parquet
+        - src/informatics/filtering.py
+        - src/informatics/keywords.py
+        - src/informatics/cleaning.py
+      params:
+        - filter
+      outs:
+        - data/interim/${item}_candidates.parquet
+        - data/interim/${item}_ai_only_sample.parquet
+      metrics:
+        - data/interim/${item}_filter_summary.json:
+            cache: false
+
+  # After labelling (informatics label-sample), uncomment to make the classifier part of the
+  # pipeline, and set analyze.selection to relevance in params.yaml.
+  # classify:
+  #   foreach: ${sets}
+  #   do:
+  #     cmd: informatics classify --set ${item} --method model
+  #     deps:
+  #       - data/interim/${item}_candidates.parquet
+  #       - labels/${item}_to_label.csv
+  #       - labels/${item}_key.csv
+  #       - src/informatics/relevance.py
+  #     outs:
+  #       - data/interim/${item}_relevance.parquet
+  #     metrics:
+  #       - data/interim/${item}_relevance.json:
+  #           cache: false
+
+  analyze:
+    foreach: ${sets}
+    do:
+      cmd: >-
+        informatics analyze --set ${item} --selection ${analyze.selection}
+        --themes ${analyze.themes} --min-df ${analyze.min_df} --seed ${analyze.seed}
+      deps:
+        - data/interim/${item}_candidates.parquet
+        - data/interim/${item}_ai_only_sample.parquet
+        - src/informatics
+      params:
+        - analyze
+      outs:
+        - results/${item}/papers.parquet
+        - results/${item}/papers.csv
+        - results/${item}/report.md:
+            cache: false
+        - results/${item}/report.html:
+            cache: false
+      metrics:
+        - results/${item}/run_info.json:
+            cache: false
+
+  compare:
+    cmd: >-
+      informatics analyze --set ${compare} --selection ${analyze.selection}
+      --themes ${analyze.themes} --min-df ${analyze.min_df} --seed ${analyze.seed}
+    deps:
+      - data/interim/cs_candidates.parquet
+      - data/interim/q-bio_candidates.parquet
+      - data/interim/cs_ai_only_sample.parquet
+      - data/interim/q-bio_ai_only_sample.parquet
+      - src/informatics
+    params:
+      - compare
+      - analyze
+    outs:
+      - results/cs+q-bio/papers.parquet
+      - results/cs+q-bio/papers.csv
+      - results/cs+q-bio/report.md:
+          cache: false
+      - results/cs+q-bio/report.html:
+          cache: false
+    metrics:
+      - results/cs+q-bio/run_info.json:
+          cache: false

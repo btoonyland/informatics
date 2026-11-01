@@ -24,7 +24,7 @@ embeddings = ["sentence-transformers>=2.2"]
 llm = ["anthropic>=1.0"]
 # Only needed for misc/pdf_extract.py
 pdf = ["pypdf>=4.0", "pdfminer.six>=20231228"]
-dev = ["pytest>=8", "ruff>=0.5"]
+dev = ["pytest>=8", "ruff==0.17.3", "pyyaml>=6"]
 
 [project.scripts]
 informatics = "informatics.cli:main"

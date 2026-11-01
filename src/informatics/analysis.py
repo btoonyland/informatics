@@ -9,6 +9,7 @@ and set) -> publication data -> CSV/Parquet tables and report.md.
 
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 import platform
 import subprocess
@@ -19,6 +20,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+import scipy
 import sklearn
 
 from informatics import __version__, concepts, tags, trends
@@ -40,6 +42,7 @@ from informatics.phrases import (
     log_odds,
     surface_forms,
 )
+from informatics.provenance import file_info
 from informatics.records import title_and_abstract
 from informatics.report import render_report
 from informatics.selection import selected_papers
@@ -213,6 +216,13 @@ def with_llm_themes(papers: pd.DataFrame, sets: list[str], layout: Layout) -> pd
     return papers
 
 
+def _version(package: str) -> str | None:
+    try:
+        return importlib.metadata.version(package)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
 def _git_commit() -> str | None:
     try:
         commit = subprocess.run(
@@ -268,11 +278,18 @@ def run_analysis(
             backgrounds.append(read_parquet(background_path))
         if layout.openalex(name).exists():
             enriched.append(read_parquet(layout.openalex(name)))
+        relevance_used = selection.method == "relevance"
         inputs[name] = {
-            "candidates": str(layout.candidates(name)),
-            "relevance": (str(layout.relevance(name)) if selection.method == "relevance" else None),
-            "background": str(background_path) if use_bg else None,
-            "openalex": str(layout.openalex(name)) if layout.openalex(name).exists() else None,
+            role: file_info(path)
+            for role, path in {
+                "filter_summary": summary_path,
+                "candidates": layout.candidates(name),
+                "relevance": layout.relevance(name) if relevance_used else None,
+                "relevance_info": layout.relevance_info(name) if relevance_used else None,
+                "background": background_path if use_bg else None,
+                "openalex": layout.openalex(name),
+                "llm": layout.llm(name) if config.themes == "llm" else None,
+            }.items()
         }
 
     papers = combine(frames)
@@ -465,6 +482,8 @@ def run_analysis(
             "pandas": pd.__version__,
             "pyarrow": pa.__version__,
             "scikit-learn": sklearn.__version__,
+            "scipy": scipy.__version__,
+            "simplemma": _version("simplemma"),
         },
     }
 

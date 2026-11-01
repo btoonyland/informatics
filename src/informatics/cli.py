@@ -104,6 +104,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-pages", type=int, help="stop after N pages (run again to continue)")
     p.add_argument("--restart", action="store_true", help="discard a previous partial harvest")
 
+    p = sub.add_parser(
+        "update", help="harvest what changed since the last harvest and merge it into data/raw"
+    )
+    add_set(p, "OAI-PMH set to bring up to date")
+    p.add_argument(
+        "--from", dest="date_from", help="default: the newest record date already in data/raw"
+    )
+    p.add_argument("--until", dest="date_until", help="only records changed on/before YYYY-MM-DD")
+    p.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    p.add_argument("--delay", type=float, default=5.0, help="seconds between requests")
+    p.add_argument("--max-pages", type=int, help="stop after N pages (run again to continue)")
+
     p = sub.add_parser("list-sets", help="list the sets the OAI-PMH endpoint offers")
     p.add_argument("--base-url", default=DEFAULT_BASE_URL)
 
@@ -172,7 +184,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=42)
 
     p = sub.add_parser("analyze", help="phrases, clusters and themes into results/<set>")
-    p.add_argument("--set", dest="sets", action="append", required=True, help="repeatable")
+    p.add_argument(
+        "--set", dest="sets", action="append", required=True, help="repeatable, or comma-separated"
+    )
     p.add_argument("--out", type=Path, help="default: results/<set>[+<set>...]")
     p.add_argument("--top", type=int, default=100, help="rows in the phrase tables")
     p.add_argument("--min-df", type=int, default=5, help="minimum papers per phrase")
@@ -211,7 +225,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_selection(p)
 
     p = sub.add_parser("embed", help="cache sentence embeddings of the selected papers")
-    p.add_argument("--set", dest="sets", action="append", required=True, help="repeatable")
+    p.add_argument(
+        "--set", dest="sets", action="append", required=True, help="repeatable, or comma-separated"
+    )
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--batch-size", type=int, default=64)
     add_selection(p)
@@ -292,6 +308,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     for name, default in GLOBAL_DEFAULTS.items():
         if not hasattr(args, name):
             setattr(args, name, default)
+    if getattr(args, "sets", None):  # --set cs,q-bio is the same as --set cs --set q-bio
+        args.sets = list(dict.fromkeys(s.strip() for v in args.sets for s in v.split(",") if s))
     return args
 
 

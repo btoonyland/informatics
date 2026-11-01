@@ -18,11 +18,18 @@ from informatics.count import count_articles, default_query
 from informatics.embeddings import embed, embedding_text, load_encoder, model_slug
 from informatics.enrich import enrich
 from informatics.filtering import FilterConfig, run_filter
-from informatics.harvest import consolidate, harvest, list_sets
+from informatics.harvest import (
+    consolidate,
+    harvest,
+    latest_datestamp,
+    list_sets,
+    merge_update,
+)
 from informatics.imports import import_kaggle, import_legacy_csv
 from informatics.llm import RUBRIC, LlmClassifier, LlmConfig, decisions_from_answers, paper_message
 from informatics.openalex import import_openalex
 from informatics.paths import Layout, slug
+from informatics.provenance import file_info
 from informatics.pubmed import (
     AI_MESH,
     BASELINE_SOURCE,
@@ -111,6 +118,40 @@ def cmd_harvest(args: argparse.Namespace, layout: Layout) -> None:
         print(f"Harvest complete: {layout.raw(args.set_name)}")
     else:
         print(f"Paused after {state['records']} records; run the same command to continue.")
+
+
+def cmd_update(args: argparse.Namespace, layout: Layout) -> None:
+    """Harvest only the records changed since the newest one in the raw file, and merge them."""
+    raw = _require(layout.raw(args.set_name), f"harvest or import {args.set_name} first")
+    since = args.date_from or latest_datestamp(raw)
+    if not since:
+        raise ValueError(f"{raw} has no record dates; give --from YYYY-MM-DD")
+    target = layout.data_dir / "raw" / f"{slug(args.set_name)}_updates" / since
+    state = harvest(
+        args.set_name,
+        target,
+        base_url=args.base_url,
+        date_from=since,
+        date_until=args.date_until,
+        delay=args.delay,
+        max_pages=args.max_pages,
+    )
+    if not state["complete"]:
+        print(f"Paused after {state['records']} records; run the same command to continue.")
+        return
+    update = consolidate(target, target / "update.parquet")
+    counts = merge_update(raw, update)
+    info_path = layout.raw_info(args.set_name)
+    info = read_json(info_path) if info_path.exists() else {"source": "oai-pmh"}
+    info.setdefault("updates", []).append(
+        {"from": since, "until": args.date_until, **counts,
+         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    )  # fmt: skip
+    write_json(info, info_path)
+    print(
+        f"{counts['added']:,} new and {counts['updated']:,} changed records since {since}; "
+        f"{raw} now holds {counts['total']:,}. Run filter, classify and analyze again."
+    )
 
 
 def cmd_list_sets(args: argparse.Namespace, layout: Layout) -> None:
@@ -232,6 +273,7 @@ def cmd_classify(args: argparse.Namespace, layout: Layout) -> None:
     texts = cache.prepare(unique["id"].tolist(), title_and_abstract(unique))
     cache.save()
     result = train_and_classify(unique, texts, labels, folds=args.folds, seed=args.seed)
+    result.info["labels_file"] = file_info(_label_paths(args.labels_dir, args.set_name)[0])
     write_parquet(result.decisions, layout.relevance(args.set_name))
     write_json(result.info, layout.relevance_info(args.set_name))
     cv = result.info["cv"]
@@ -282,6 +324,7 @@ def _classify_llm(args: argparse.Namespace, layout: Layout, candidates: pd.DataF
         return
     decisions, info = decisions_from_answers(candidates, classifier.answers(), labels, config.model)
     info["rubric_sha1"] = hashlib.sha1(config.system_prompt.encode("utf-8")).hexdigest()
+    info["labels_file"] = file_info(labels_path)
     write_parquet(decisions, layout.relevance(args.set_name))
     write_json(info, layout.relevance_info(args.set_name))
     print(
@@ -499,6 +542,7 @@ def cmd_to_csv(args: argparse.Namespace, layout: Layout) -> None:
 
 COMMANDS = {
     "harvest": cmd_harvest,
+    "update": cmd_update,
     "list-sets": cmd_list_sets,
     "count": cmd_count,
     "import-kaggle": cmd_import_kaggle,

@@ -39,6 +39,7 @@ import pyarrow as pa
 from informatics import keywords
 from informatics.cleaning import is_non_english, is_withdrawn, near_duplicates
 from informatics.normalize import clean_characters
+from informatics.provenance import file_info
 from informatics.records import RAW_SCHEMA
 from informatics.storage import iter_parquet, read_json, write_json, write_parquet
 
@@ -217,6 +218,7 @@ def run_filter(
     summary = {
         "set": set_name,
         "raw": str(raw_path),
+        "raw_file": file_info(raw_path),
         # How the raw file was made (see sources.py), and which sources its papers came from.
         "import": read_json(import_path) if import_path.exists() else None,
         "sources": {str(k): int(v) for k, v in sources.items()},

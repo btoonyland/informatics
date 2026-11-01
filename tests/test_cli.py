@@ -144,3 +144,41 @@ def test_pubmed_files_through_the_cli(tmp_path, monkeypatch, capsys):
     assert "Artificial Intelligence" in info["mesh"] and info["counts"]["kept"] == 1
     assert main(["import-pubmed-files", "nothing/*.xml.gz", "--set", "pubmed"]) == 1
     assert "not found" in capsys.readouterr().err
+
+
+def test_sets_can_be_comma_separated():
+    args = parse_args(["analyze", "--set", "cs,q-bio", "--set", "cs", "--set", "pubmed"])
+    assert args.sets == ["cs", "q-bio", "pubmed"]
+
+
+def test_dvc_pipeline_commands_are_valid():
+    """Every command in dvc.yaml, with params.yaml filled in, parses with this CLI."""
+    import re
+    import shlex
+
+    yaml = pytest.importorskip("yaml")
+    root = Path(__file__).resolve().parent.parent
+    params = yaml.safe_load((root / "params.yaml").read_text())
+    stages = yaml.safe_load((root / "dvc.yaml").read_text())["stages"]
+
+    def fill(text: str, item: str) -> str:
+        def value(match: re.Match) -> str:
+            if match.group(1) == "item":
+                return item
+            node = params
+            for part in match.group(1).split("."):
+                node = node[part]
+            return str(node)
+
+        return re.sub(r"\$\{([^}]+)\}", value, text)
+
+    commands = []
+    for stage in stages.values():
+        body = stage.get("do", stage)
+        for item in params["sets"] if "foreach" in stage else [""]:
+            commands.append(fill(body["cmd"], item))
+    assert len(commands) == 2 * len(params["sets"]) + 1
+    for command in commands:
+        argv = shlex.split(command)
+        assert argv[0] == "informatics"
+        parse_args(argv[1:])  # exits on an unknown option or value
