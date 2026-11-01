@@ -23,3 +23,6 @@ venv/
 .ruff_cache/
 .ipynb_checkpoints/
 .DS_Store
+
+# Records saved by the live tests (INFORMATICS_RECORD_DIR); review before moving to tests/fixtures
+recorded/

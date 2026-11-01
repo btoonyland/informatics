@@ -1,10 +1,13 @@
-"""Analyse the selected papers of one or more sets and write tables plus a Markdown report.
+"""Analyse the selected papers of one or more sets and write tables and two reports.
 
-Steps: combine the sets (cross-listed papers once) -> drop near-duplicates -> prepare and
-normalise the texts (normalize.py, cached) -> phrases (most common, distinctive compared with
-AI-only papers, rising and falling between periods, different between sets) -> topic clusters
-(LSA or sentence embeddings) -> themes and concepts (shares with 95% intervals, by year, cluster
-and set) -> publication data -> CSV/Parquet tables and report.md.
+Steps: select each set's papers (selection.py: the keyword rule or `informatics classify`'s
+decisions) and combine the sets, counting cross-listed papers once -> prepare and normalise the
+texts (normalize.py, cached) -> phrases (most common, distinctive compared with AI-only papers,
+rising and falling between periods, different between sets) -> topic clusters (LSA or sentence
+embeddings) -> themes (keywords or the language model's) and concepts, as shares with 95%
+intervals by year, cluster and set -> trends within topics (trends.py) -> publication data
+(publication.py) -> CSV/Parquet tables, report.md, report.html and run_info.json, which records
+the settings, versions and a fingerprint of every input (provenance.py).
 """
 
 from __future__ import annotations
@@ -33,7 +36,6 @@ from informatics.clustering import (
     single_cluster,
 )
 from informatics.embeddings import embedding_text, load_vectors, model_slug
-from informatics.enrich import publication_status
 from informatics.filtering import search_text
 from informatics.html_report import render_html
 from informatics.keywords import THEMES
@@ -49,10 +51,10 @@ from informatics.phrases import (
     surface_forms,
 )
 from informatics.provenance import file_info
+from informatics.publication import add_publication_data, countries_table, publication_by_year
 from informatics.records import title_and_abstract
 from informatics.report import render_report
 from informatics.selection import selected_papers
-from informatics.stats import wilson_interval
 from informatics.storage import (
     read_json,
     read_parquet,
@@ -78,10 +80,6 @@ PAPER_COLUMNS = [
     "medicine_terms", "themes", "theme_terms", *[concepts.column(d) for d in concepts.CONCEPTS],
     "publication_status", "doi", "journal_ref", "comments", "venue", "venue_type", "field",
     "institution_types", "countries", "cited_by_count", "abstract",
-]  # fmt: skip
-OPENALEX_COLUMNS = [
-    "openalex_id", "matched_by", "venue", "venue_type", "field", "institution_types",
-    "countries", "cited_by_count",
 ]  # fmt: skip
 
 
@@ -154,48 +152,6 @@ def default_periods(years: np.ndarray) -> tuple[tuple[int, int], tuple[int, int]
         return None
     last = int(valid.max())
     return (last - 6, last - 3), (last - 2, last)
-
-
-def _share(row: dict, name: str, hits: int, n: int) -> None:
-    low, high = wilson_interval(hits, n)
-    row[f"share_{name}"] = hits / n if n else np.nan
-    row[f"{name}_ci_low"], row[f"{name}_ci_high"] = low, high
-
-
-def publication_by_year(papers: pd.DataFrame, with_openalex: bool) -> pd.DataFrame:
-    """Per year: evidence of publication from arXiv's fields and, if enriched, from OpenAlex
-    (OpenAlex shares are among the papers OpenAlex matched)."""
-    rows = []
-    for year, group in papers.dropna(subset=["year"]).groupby("year"):
-        n = len(group)
-        status = group["publication_status"]
-        row = {
-            "year": int(year),
-            "papers": n,
-            "share_journal_ref": float((status == "journal reference").mean()),
-            "share_accepted_comment": float((status == "accepted (comments)").mean()),
-        }
-        _share(row, "any_evidence", int((status != "no evidence").sum()), n)
-        if with_openalex:
-            matched = group[group["openalex_id"].notna()]
-            row["share_in_openalex"] = len(matched) / n
-            m = len(matched)
-            published = int(matched["venue_type"].isin(["journal", "conference"]).sum())
-            _share(row, "journal_or_conference", published, m)
-            for kind in ("healthcare", "company"):
-                hits = int(matched["institution_types"].map(lambda t, k=kind: k in t).sum())
-                _share(row, f"{kind}_author", hits, m)
-            row["median_citations"] = matched["cited_by_count"].median() if m else np.nan
-        rows.append(row)
-    return pd.DataFrame(rows)
-
-
-def countries_table(papers: pd.DataFrame) -> pd.DataFrame:
-    matched = papers[papers["openalex_id"].notna()]
-    counts = matched["countries"].explode().dropna().value_counts()
-    table = counts.rename_axis("country").reset_index(name="papers")
-    table["share"] = table["papers"] / max(len(matched), 1)
-    return table
 
 
 def with_llm_themes(papers: pd.DataFrame, sets: list[str], layout: Layout) -> pd.DataFrame:
@@ -453,17 +409,8 @@ def run_analysis(
     )
 
     # Publication data -------------------------------------------------------------------------
-    comments = papers["comments"] if "comments" in papers else pd.Series(None, index=papers.index)
-    papers["publication_status"] = [
-        publication_status(j, c) for j, c in zip(papers["journal_ref"], comments, strict=True)
-    ]
+    papers = add_publication_data(papers, enriched)
     with_openalex = bool(enriched)
-    if with_openalex:
-        oa = pd.concat(enriched, ignore_index=True).drop_duplicates("id")
-        oa = oa[["id", *[c for c in OPENALEX_COLUMNS if c in oa]]]
-        papers = papers.merge(oa, on="id", how="left")
-        for col in ("institution_types", "countries"):
-            papers[col] = papers[col].map(lambda v: v if isinstance(v, list) else [])
     publication = publication_by_year(papers, with_openalex)
     countries = countries_table(papers) if with_openalex else None
     year_table = papers_by_year(papers, summaries)

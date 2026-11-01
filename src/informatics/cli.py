@@ -183,55 +183,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--seed", type=int, default=42)
 
-    p = sub.add_parser("analyze", help="phrases, clusters and themes into results/<set>")
-    p.add_argument(
-        "--set", dest="sets", action="append", required=True, help="repeatable, or comma-separated"
-    )
-    p.add_argument("--out", type=Path, help="default: results/<set>[+<set>...]")
-    p.add_argument("--top", type=int, default=100, help="rows in the phrase tables")
-    p.add_argument("--min-df", type=int, default=5, help="minimum papers per phrase")
-    p.add_argument("--no-background", action="store_true", help="skip the AI-only comparison")
-    p.add_argument("--k", type=_k, default="auto", help="number of clusters, or 'auto'")
-    p.add_argument(
-        "--k-candidates",
-        type=_int_tuple,
-        default=DEFAULT_K_CANDIDATES,
-        help="comma-separated k values tried when --k auto",
-    )
-    p.add_argument("--cluster-min-df", type=int, default=5)
-    p.add_argument("--cluster-max-df", type=float, default=0.5)
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--recent", type=_years, help="period for rising phrases, e.g. 2023-2025")
-    p.add_argument("--earlier", type=_years, help="period to compare with, e.g. 2019-2022")
-    p.add_argument("--embeddings", metavar="MODEL", help="cluster on vectors from `embed`")
-    p.add_argument("--no-cache", action="store_true", help="re-prepare every text")
-    p.add_argument(
-        "--trend-min-papers", type=int, default=20, help="trends: papers with and without a tag"
-    )
-    p.add_argument("--trend-min-year-papers", type=int, default=20, help="trends: papers in a year")
-    p.add_argument(
-        "--themes",
-        choices=["keywords", "llm"],
-        default="keywords",
-        help="tag themes by keyword patterns, or use the language model's (classify --method llm)",
-    )
-    add_selection(p)
-
-    p = sub.add_parser("enrich", help="add OpenAlex publication data for the selected papers")
-    add_set(p)
-    p.add_argument("--api-key", default=os.environ.get("OPENALEX_API_KEY"),
-                   help="OpenAlex API key (free; or set OPENALEX_API_KEY)")  # fmt: skip
-    p.add_argument("--mailto", help="contact e-mail sent to OpenAlex (optional)")
-    add_selection(p)
-
-    p = sub.add_parser("embed", help="cache sentence embeddings of the selected papers")
-    p.add_argument(
-        "--set", dest="sets", action="append", required=True, help="repeatable, or comma-separated"
-    )
-    p.add_argument("--model", default=DEFAULT_MODEL)
-    p.add_argument("--batch-size", type=int, default=64)
-    add_selection(p)
-
     p = sub.add_parser("label-sample", help="draw papers to hand-label for measuring selection")
     add_set(p)
     p.add_argument("--n-strict", type=int, default=150, help="candidates meeting the keyword rule")
@@ -296,6 +247,55 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("label-themes-evaluate", help="precision (and recall) of the themes")
     add_set(p)
     add_labels_dir(p)
+
+    p = sub.add_parser("enrich", help="add OpenAlex publication data for the selected papers")
+    add_set(p)
+    p.add_argument("--api-key", default=os.environ.get("OPENALEX_API_KEY"),
+                   help="OpenAlex API key (free; or set OPENALEX_API_KEY)")  # fmt: skip
+    p.add_argument("--mailto", help="contact e-mail sent to OpenAlex (optional)")
+    add_selection(p)
+
+    p = sub.add_parser("embed", help="cache sentence embeddings of the selected papers")
+    p.add_argument(
+        "--set", dest="sets", action="append", required=True, help="repeatable, or comma-separated"
+    )
+    p.add_argument("--model", default=DEFAULT_MODEL)
+    p.add_argument("--batch-size", type=int, default=64)
+    add_selection(p)
+
+    p = sub.add_parser("analyze", help="phrases, clusters and themes into results/<set>")
+    p.add_argument(
+        "--set", dest="sets", action="append", required=True, help="repeatable, or comma-separated"
+    )
+    p.add_argument("--out", type=Path, help="default: results/<set>[+<set>...]")
+    p.add_argument("--top", type=int, default=100, help="rows in the phrase tables")
+    p.add_argument("--min-df", type=int, default=5, help="minimum papers per phrase")
+    p.add_argument("--no-background", action="store_true", help="skip the AI-only comparison")
+    p.add_argument("--k", type=_k, default="auto", help="number of clusters, or 'auto'")
+    p.add_argument(
+        "--k-candidates",
+        type=_int_tuple,
+        default=DEFAULT_K_CANDIDATES,
+        help="comma-separated k values tried when --k auto",
+    )
+    p.add_argument("--cluster-min-df", type=int, default=5)
+    p.add_argument("--cluster-max-df", type=float, default=0.5)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--recent", type=_years, help="period for rising phrases, e.g. 2023-2025")
+    p.add_argument("--earlier", type=_years, help="period to compare with, e.g. 2019-2022")
+    p.add_argument("--embeddings", metavar="MODEL", help="cluster on vectors from `embed`")
+    p.add_argument("--no-cache", action="store_true", help="re-prepare every text")
+    p.add_argument(
+        "--trend-min-papers", type=int, default=20, help="trends: papers with and without a tag"
+    )
+    p.add_argument("--trend-min-year-papers", type=int, default=20, help="trends: papers in a year")
+    p.add_argument(
+        "--themes",
+        choices=["keywords", "llm"],
+        default="keywords",
+        help="tag themes by keyword patterns, or use the language model's (classify --method llm)",
+    )
+    add_selection(p)
 
     p = sub.add_parser("to-csv", help="convert any Parquet file to a spreadsheet-friendly CSV")
     p.add_argument("parquet", type=Path)
