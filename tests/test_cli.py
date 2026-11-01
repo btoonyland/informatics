@@ -83,7 +83,7 @@ def test_classifier_through_the_cli(layout, corpus, monkeypatch, capsys):
     assert set(kinds[selected]) <= {"ai_medicine", "duplicate", "wide_relevant"}
 
     assert main(["label-evaluate", "--set", "cs"]) == 0
-    assert "Classifier (model): precision" in capsys.readouterr().out
+    assert "Classify (model): precision" in capsys.readouterr().out
     assert main(["analyze", "--set", "cs", "--min-df", "3", "--cluster-min-df", "3",
                  "--k", "4"]) == 0  # fmt: skip
     report = Path("results/cs/report.md").read_text(encoding="utf-8")

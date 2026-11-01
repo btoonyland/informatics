@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
 import sys
 from pathlib import Path
@@ -17,6 +19,7 @@ from informatics.enrich import enrich
 from informatics.filtering import FilterConfig, run_filter
 from informatics.harvest import consolidate, harvest, list_sets
 from informatics.imports import import_kaggle, import_legacy_csv
+from informatics.llm import RUBRIC, LlmClassifier, LlmConfig, decisions_from_answers, paper_message
 from informatics.paths import Layout, slug
 from informatics.pubmed import import_pubmed
 from informatics.records import title_and_abstract
@@ -156,6 +159,9 @@ def cmd_classify(args: argparse.Namespace, layout: Layout) -> None:
         layout, args.set_name, columns=["id", "title", "abstract", "keyword_rule", "duplicate_of"]
     )
     unique = candidates[candidates["duplicate_of"].isna()].reset_index(drop=True)
+    if args.method == "llm":
+        _classify_llm(args, layout, unique)
+        return
     labels = hand_labels(args.labels_dir, args.set_name)
     cache = TextCache(layout.text_cache())
     texts = cache.prepare(unique["id"].tolist(), title_and_abstract(unique))
@@ -169,6 +175,54 @@ def cmd_classify(args: argparse.Namespace, layout: Layout) -> None:
         f"{_show(cv['precision'])}, recall {_show(cv['recall'])} (weighted to the candidates); "
         f"{result.info['selected']:,} of {result.info['candidates']:,} candidates relevant "
         f"-> {layout.relevance(args.set_name)}"
+    )
+
+
+def _classify_llm(args: argparse.Namespace, layout: Layout, candidates: pd.DataFrame) -> None:
+    rubric = args.rubric.read_text(encoding="utf-8") if args.rubric else RUBRIC
+    config = LlmConfig(model=args.llm_model, rubric=rubric, batch_size=args.batch_size)
+    papers = candidates
+    labels_path = _label_paths(args.labels_dir, args.set_name)[0]
+    labels = hand_labels(args.labels_dir, args.set_name) if labels_path.exists() else pd.Series()
+    if args.labelled_only:
+        papers = candidates[candidates["id"].isin(labels.index)]
+        if papers.empty:
+            raise ValueError("no labelled candidates yet; run label-sample and label some papers")
+    if args.max_papers is not None:
+        papers = papers.sample(n=min(args.max_papers, len(papers)), random_state=args.seed)
+    classifier = LlmClassifier(layout.llm(args.set_name), layout.llm_batches(args.set_name), config)
+    if args.dry_run:
+        todo = classifier.to_send(
+            {i: paper_message(t, a) for i, t, a in
+             zip(papers["id"], papers["title"], papers["abstract"], strict=True)},
+            args.retry_failed,
+        )  # fmt: skip
+        print(f"{len(todo):,} of {len(papers):,} papers would be sent to {config.model}.")
+        if todo:
+            first = papers.set_index("id").loc[todo[0]]
+            request = config.request(todo[0], paper_message(first["title"], first["abstract"]))
+            print(json.dumps(request, indent=2, ensure_ascii=False))
+        return
+    counts = classifier.run(papers, wait=args.wait, retry_failed=args.retry_failed)
+    done = ", ".join(f"{n:,} {status}" for status, n in sorted(counts.items()) if n)
+    print(f"Language-model answers for {len(papers):,} papers: {done or 'none yet'}.")
+    if counts["waiting"] or counts["unanswered"]:
+        print("Run the same command again later (or add --wait) to collect the rest.")
+        return
+    if len(papers) < len(candidates):
+        print(
+            "Only some candidates were sent, so the selection is unchanged; check them with "
+            f"`informatics label-evaluate --set {args.set_name}`."
+        )
+        return
+    decisions, info = decisions_from_answers(candidates, classifier.answers(), labels, config.model)
+    info["rubric_sha1"] = hashlib.sha1(config.system_prompt.encode("utf-8")).hexdigest()
+    write_parquet(decisions, layout.relevance(args.set_name))
+    write_json(info, layout.relevance_info(args.set_name))
+    print(
+        f"{info['selected']:,} of {info['candidates']:,} candidates relevant "
+        f"({info['keyword_rule_fallback']:,} decided by the keyword rule because the model gave "
+        f"no answer) -> {layout.relevance(args.set_name)}"
     )
 
 
@@ -216,12 +270,18 @@ def cmd_label_evaluate(args: argparse.Namespace, layout: Layout) -> None:
     summary = read_json(_require(layout.filter_summary(args.set_name), "run filter first"))
     if "strict" not in summary["counts"]:
         raise ValueError("the filter summary is from an older version; run `informatics filter`")
-    decisions = method = None
+    decisions, method = {}, None
     if layout.relevance(args.set_name).exists():
-        decisions = read_parquet(layout.relevance(args.set_name), columns=["id", "predicted"])
         info_path = layout.relevance_info(args.set_name)
         method = read_json(info_path).get("method") if info_path.exists() else None
-    table, result = evaluate_labels(sheet, key, summary, decisions, method)
+        decisions[f"classify ({method})"] = read_parquet(
+            layout.relevance(args.set_name), columns=["id", "predicted"]
+        )
+    if layout.llm(args.set_name).exists() and method != "llm":
+        answers = read_parquet(layout.llm(args.set_name), columns=["id", "status", "relevant"])
+        answers = answers[answers["status"] == "ok"]
+        decisions["language model"] = answers.rename(columns={"relevant": "predicted"})
+    table, result = evaluate_labels(sheet, key, summary, decisions)
     print(table.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
     rule, wide = result["keyword_rule"], result["wide_net"]
     print(
@@ -233,10 +293,9 @@ def cmd_label_evaluate(args: argparse.Namespace, layout: Layout) -> None:
         f"Wide net: {wide['candidates']:,} candidates, recall {_show(wide['recall'])} "
         f"({_show_ci(wide['recall_ci'])}), precision {_show(wide['precision'])}"
     )
-    if result["classifier"]:
-        c = result["classifier"]
+    for name, c in result["classifiers"].items():
         print(
-            f"Classifier ({c['method']}): precision {_show(c['precision'])} "
+            f"{name[0].upper()}{name[1:]}: precision {_show(c['precision'])} "
             f"({_show_ci(c['precision_ci'])}), recall {_show(c['recall'])} "
             f"({_show_ci(c['recall_ci'])}), kappa {c['kappa']:.2f} on {c['compared']} labelled "
             "candidates"
@@ -359,6 +418,7 @@ def cmd_analyze(args: argparse.Namespace, layout: Layout) -> None:
         embeddings=args.embeddings,
         use_cache=not args.no_cache,
         selection=args.selection,
+        themes=args.themes,
     )
     out = run_analysis(args.sets, layout, args.out, config)
     print(f"Results written to {out} (start with {out / 'report.md'})")

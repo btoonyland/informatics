@@ -157,16 +157,17 @@ def evaluate_labels(
     sheet: pd.DataFrame,
     key: pd.DataFrame,
     summary: dict,
-    decisions: pd.DataFrame | None = None,
-    method: str | None = None,
+    decisions: Mapping[str, pd.DataFrame] | None = None,
     n_boot: int = 2000,
     seed: int = 0,
 ) -> tuple[pd.DataFrame, dict]:
-    """Per-stratum table and estimates for the keyword rule, the wide net and, if
-    ``decisions`` (columns ``id`` and ``predicted``) are given, the classifier.
+    """Per-stratum table and estimates for the keyword rule, the wide net and each method in
+    ``decisions`` (name -> table with ``id`` and ``predicted``; e.g. the trained classifier
+    and the language model). A method is measured on the labelled candidates it decided.
 
     Every estimate is a stratified one: a labelled paper stands for ``size / labelled`` papers
-    of its stratum. Recall intervals come from resampling the labelled papers within strata.
+    of its stratum. Intervals for the scaled estimates come from resampling the labelled papers
+    within strata.
     """
     df = read_labels(sheet, key)
     labelled = df[df["relevant"].notna()]
@@ -191,34 +192,41 @@ def evaluate_labels(
         )
     table = pd.DataFrame(rows)
 
-    predicted = None
-    if decisions is not None:
-        predicted = labelled["id"].map(decisions.set_index("id")["predicted"])
+    predictions = {
+        name: labelled["id"].map(table.set_index("id")["predicted"])
+        for name, table in (decisions or {}).items()
+    }
     rng = np.random.default_rng(seed)
-    # Per stratum: bootstrap draws of the estimated relevant papers and, for candidates, of the
-    # classifier's true positives, false positives and false negatives.
+    # Per stratum: bootstrap draws of the estimated relevant papers and, for candidates, of each
+    # method's true positives, false positives and false negatives.
     estimated: dict[str, np.ndarray] = {}
     point: dict[str, float] = {}
-    counts: dict[str, dict[str, np.ndarray]] = {}
+    counts: dict[str, dict[str, dict[str, np.ndarray]]] = {name: {} for name in predictions}
     for stratum in LABELLED_STRATA:
-        part = labelled["stratum"] == stratum
+        part = (labelled["stratum"] == stratum).to_numpy()
         rel = labelled.loc[part, "relevant"].astype(bool).to_numpy()
         size, n = int(sizes.get(stratum, 0)), len(rel)
         draws = _bootstrap_rows(n, n_boot, rng)
         weight = size / n if n else 0.0
         estimated[stratum] = rel[draws].sum(axis=1) * weight
         point[stratum] = rel.sum() * weight
-        if predicted is not None and stratum in CANDIDATE_STRATA:
+        if stratum not in CANDIDATE_STRATA:
+            continue
+        for name, predicted in predictions.items():
             pred = predicted[part]
             known = pred.notna().to_numpy()
+            if not known.any():
+                continue
             pred_b = pred.fillna(False).astype(bool).to_numpy()
             outcome = {
                 "tp": pred_b & rel & known,
                 "fp": pred_b & ~rel & known,
                 "fn": ~pred_b & rel & known,
             }
-            scale = size / known.sum() if known.sum() else 0.0
-            counts[stratum] = {
+            # Only labelled papers the method decided are compared, scaled to the stratum.
+            known_draws = known[draws].sum(axis=1)
+            scale = np.append(size / known.sum(), size / np.maximum(known_draws, 1))
+            counts[name][stratum] = {
                 k: np.append(v.sum(), v[draws].sum(axis=1)) * scale for k, v in outcome.items()
             }
 
@@ -251,22 +259,25 @@ def evaluate_labels(
             "recall": float(wide_recall[0]),
             "recall_ci": _ci(wide_recall[1:]),
         },
-        "classifier": None,
+        "classifiers": {},
         "labellers": _labeller_agreement(labelled),
         "estimated_relevant_in_set": float(total[0]),
         "labelled": len(labelled),
         "unlabelled_rows": int(df["relevant"].isna().sum()),
         "unlabelled_strata": unlabelled.tolist(),  # recall is an upper bound if any are listed
     }
-    if counts:
-        tp = sum(counts[s]["tp"] for s in counts)
-        fp = sum(counts[s]["fp"] for s in counts)
-        fn = sum(counts[s]["fn"] for s in counts)
-        outside = both(estimated, point, OUTSIDE_STRATA)
+    outside = both(estimated, point, OUTSIDE_STRATA)
+    for name, by_stratum in counts.items():
+        if not by_stratum:
+            continue
+        tp = sum(c["tp"] for c in by_stratum.values())
+        fp = sum(c["fp"] for c in by_stratum.values())
+        fn = sum(c["fn"] for c in by_stratum.values())
+        # A candidate stratum in which the method decided no labelled paper is left out.
         precision, recall = _ratio(tp, tp + fp), _ratio(tp, tp + fn + outside)
-        compared = candidates[predicted[candidates.index].notna()]
-        result["classifier"] = {
-            "method": method,
+        predicted = predictions[name]
+        compared = candidates[predicted[candidates.index].notna().to_numpy()]
+        result["classifiers"][name] = {
             "precision": float(precision[0]),
             "precision_ci": _ci(precision[1:]),
             "recall": float(recall[0]),
@@ -276,6 +287,7 @@ def evaluate_labels(
                 predicted[compared.index].astype(bool), compared["relevant"].astype(bool)
             ),
             "compared": len(compared),
+            "strata": sorted(by_stratum),
         }
     return table, result
 

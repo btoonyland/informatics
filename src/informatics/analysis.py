@@ -93,6 +93,7 @@ class AnalysisConfig:
     embeddings: str | None = None  # model whose vectors `informatics embed` cached
     use_cache: bool = True
     selection: str = "auto"  # see selection.py: auto, keywords or relevance
+    themes: str = "keywords"  # or "llm": the themes a language model found (llm.py)
 
 
 def combine(frames: list[pd.DataFrame]) -> pd.DataFrame:
@@ -178,6 +179,30 @@ def countries_table(papers: pd.DataFrame) -> pd.DataFrame:
     table = counts.rename_axis("country").reset_index(name="papers")
     table["share"] = table["papers"] / max(len(matched), 1)
     return table
+
+
+def with_llm_themes(papers: pd.DataFrame, sets: list[str], layout: Layout) -> pd.DataFrame:
+    """Replace the keyword themes by the themes the language model found (llm.py)."""
+    answers = []
+    for name in sets:
+        if layout.llm(name).exists():
+            found = read_parquet(layout.llm(name), columns=["id", "status", "themes"])
+            answers.append(found[found["status"] == "ok"])
+    themes = (
+        pd.concat(answers).drop_duplicates("id").set_index("id")["themes"]
+        if answers
+        else pd.Series(dtype=object)
+    )
+    missing = int((~papers["id"].isin(themes.index)).sum())
+    if missing:
+        raise ValueError(
+            f"{missing:,} of the {len(papers):,} papers have no themes from the language model; "
+            f"run `informatics classify --method llm` for {', '.join(sets)} first"
+        )
+    papers = papers.copy()
+    papers["themes"] = papers["id"].map(themes)
+    papers["theme_terms"] = [[] for _ in range(len(papers))]  # no matched words to show
+    return papers
 
 
 def _git_commit() -> str | None:
@@ -339,6 +364,10 @@ def run_analysis(
     papers["cluster"] = clusters.labels
 
     # Themes and concepts ----------------------------------------------------------------------
+    if config.themes == "llm":
+        papers = with_llm_themes(papers, sets, layout)
+    elif config.themes != "keywords":
+        raise ValueError(f"unknown theme source {config.themes!r}; use keywords or llm")
     papers = papers.join(concepts.tag_concepts(search_text(papers)))
     groups = ["year", "cluster"] + (["corpus_group"] if len(sets) > 1 else [])
     theme_names = list(THEMES)

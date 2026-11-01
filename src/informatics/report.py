@@ -205,11 +205,19 @@ def render_report(ctx: dict) -> str:
     # Themes and concepts --------------------------------------------------------------------
     themes = ctx["theme_tables"]
     out.append("## Themes\n")
-    out.append(
-        "Share of papers whose title or abstract mentions each theme (keyword match with "
-        "exclusions, `keywords.THEMES`). `accuracy` appears in most machine-learning papers, "
-        "so treat it as a baseline.\n"
-    )
+    if info["config"].get("themes") == "llm":
+        out.append(
+            "Share of papers that discuss each theme, as judged by a language model reading the "
+            "title and abstract against written definitions (`llm.THEME_DEFINITIONS`). "
+            "`accuracy` applies to most papers that evaluate a model, so treat it as a "
+            "baseline.\n"
+        )
+    else:
+        out.append(
+            "Share of papers whose title or abstract mentions each theme (keyword match with "
+            "exclusions, `keywords.THEMES`). `accuracy` appears in most machine-learning papers, "
+            "so treat it as a baseline.\n"
+        )
     out.append(_tag_overview(themes["overall"], "theme"))
     top_themes = _top_tags(themes["overall"], 6)
     by_year = themes["year"][themes["year"]["papers_in_group"] >= 20]

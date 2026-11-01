@@ -20,6 +20,8 @@ dependencies = [
 [project.optional-dependencies]
 # Sentence embeddings for clustering (informatics embed / analyze --embeddings)
 embeddings = ["sentence-transformers>=2.2"]
+# Language-model classification (informatics classify --method llm)
+llm = ["anthropic>=1.0"]
 # Only needed for misc/pdf_extract.py
 pdf = ["pypdf>=4.0", "pdfminer.six>=20231228"]
 dev = ["pytest>=8", "ruff>=0.5"]

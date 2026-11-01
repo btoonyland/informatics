@@ -27,6 +27,7 @@ from informatics.commands import COMMANDS
 from informatics.embeddings import DEFAULT_MODEL
 from informatics.harvest import DEFAULT_BASE_URL, HarvestError
 from informatics.http_client import HttpError
+from informatics.llm import DEFAULT_MODEL as LLM_MODEL
 from informatics.paths import Layout
 from informatics.pubmed import DEFAULT_QUERY as PUBMED_QUERY
 from informatics.selection import SELECTIONS
@@ -156,6 +157,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--earlier", type=_years, help="period to compare with, e.g. 2019-2022")
     p.add_argument("--embeddings", metavar="MODEL", help="cluster on vectors from `embed`")
     p.add_argument("--no-cache", action="store_true", help="re-prepare every text")
+    p.add_argument(
+        "--themes",
+        choices=["keywords", "llm"],
+        default="keywords",
+        help="tag themes by keyword patterns, or use the language model's (classify --method llm)",
+    )
     add_selection(p)
 
     p = sub.add_parser("enrich", help="add OpenAlex publication data for the selected papers")
@@ -189,11 +196,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("classify", help="decide which candidates are relevant (second stage)")
     add_set(p)
-    p.add_argument("--method", choices=["model"], default="model",
-                   help="model: train a classifier on the hand labels")  # fmt: skip
-    p.add_argument("--folds", type=int, default=5, help="cross-validation folds")
+    p.add_argument(
+        "--method",
+        choices=["model", "llm"],
+        default="model",
+        help="model: train a classifier on the hand labels; llm: ask a language model, "
+        "through the Message Batches API (needs ANTHROPIC_API_KEY)",
+    )
+    p.add_argument("--folds", type=int, default=5, help="model: cross-validation folds")
     p.add_argument("--seed", type=int, default=42)
     add_labels_dir(p)
+    p.add_argument("--llm-model", default=LLM_MODEL, help=f"llm: default {LLM_MODEL}")
+    p.add_argument("--rubric", type=Path, help="llm: a text file replacing the built-in rubric")
+    p.add_argument(
+        "--labelled-only",
+        action="store_true",
+        help="llm: only send hand-labelled candidates, to check the rubric first",
+    )
+    p.add_argument("--max-papers", type=int, help="llm: send a random sample of this size")
+    p.add_argument("--batch-size", type=int, default=5_000, help="llm: requests per batch")
+    p.add_argument("--wait", action="store_true", help="llm: wait until every batch has ended")
+    p.add_argument(
+        "--retry-failed", action="store_true", help="llm: send refused and invalid requests again"
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="llm: show what would be sent, and one request, without sending",
+    )
 
     p = sub.add_parser("label-themes-sample", help="draw papers to check the themes")
     add_set(p)

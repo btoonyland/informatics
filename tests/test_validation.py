@@ -59,7 +59,7 @@ def test_evaluate_labels_scales_strata_to_population():
     assert rule["kappa"] == pytest.approx(0.3)
     assert wide["recall"] == pytest.approx(500 / 600)
     assert wide["precision"] == pytest.approx(500 / 700) and wide["candidates"] == 700
-    assert result["classifier"] is None and result["labellers"] is None
+    assert result["classifiers"] == {} and result["labellers"] is None
     assert result["unlabelled_rows"] == 1 and result["unlabelled_strata"] == []
     assert table.set_index("stratum").loc["neither", "labelled"] == 9
 
@@ -71,15 +71,20 @@ def test_evaluate_labels_measures_the_classifier():
         + [True] * 4 + [False] + [False] * 5  # wide_only: one relevant paper missed
     )  # fmt: skip
     decisions = pd.DataFrame({"id": [str(i) for i in range(20)], "predicted": predicted})
-    _, result = evaluate_labels(sheet, key, summary, decisions, method="model")
-    c = result["classifier"]
+    _, result = evaluate_labels(sheet, key, summary, {"model": decisions})
+    c = result["classifiers"]["model"]
     # TP = 8*50 + 4*20 = 480, FP = 1*50, FN = 1*20 among candidates, 100 outside the net.
     assert c["precision"] == pytest.approx(480 / 530)
     assert c["recall"] == pytest.approx(480 / 600)
     assert c["recall_within_candidates"] == pytest.approx(480 / 500)
     assert c["kappa"] == pytest.approx(0.355 / 0.455)
-    assert c["compared"] == 20 and c["method"] == "model"
+    assert c["compared"] == 20 and c["strata"] == ["strict", "wide_only"]
     assert c["precision_ci"][0] <= c["precision"] <= c["precision_ci"][1]
+    # A method that only decided some papers is measured on those.
+    partial = decisions[decisions["id"].astype(int) < 10]  # the strict stratum only
+    c = evaluate_labels(sheet, key, summary, {"llm": partial})[1]["classifiers"]["llm"]
+    assert c["compared"] == 10 and c["strata"] == ["strict"]
+    assert c["precision"] == pytest.approx(400 / 450)
 
 
 def test_agreement_between_labellers():
