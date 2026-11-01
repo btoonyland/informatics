@@ -59,6 +59,28 @@ class ClusterResult:
     summary: pd.DataFrame  # one row per cluster
     k_selection: pd.DataFrame  # silhouette and stability per candidate k (empty if k was fixed)
     k: int
+    vectors: np.ndarray | None = None  # the unit-length vectors that were clustered
+
+
+def map_2d(
+    vectors: np.ndarray, sample: int = 2000, seed: int = 42
+) -> tuple[np.ndarray, np.ndarray]:
+    """(row numbers, 2-D coordinates) of up to ``sample`` papers placed by t-SNE, so papers
+    with similar vectors sit close together. Only for display: distances between far-apart
+    groups mean little in a t-SNE map."""
+    from sklearn.manifold import TSNE
+
+    n = len(vectors)
+    rows = np.arange(n)
+    if n > sample:
+        rows = np.sort(np.random.default_rng(seed).choice(n, size=sample, replace=False))
+    if len(rows) < 5:
+        return rows, np.zeros((len(rows), 2))
+    perplexity = float(min(30.0, (len(rows) - 1) / 3))
+    tsne = TSNE(
+        n_components=2, perplexity=perplexity, init="pca", learning_rate="auto", random_state=seed
+    )
+    return rows, tsne.fit_transform(np.asarray(vectors, dtype=float)[rows])
 
 
 def cluster_papers(
@@ -76,10 +98,14 @@ def cluster_papers(
     seed: int = 42,
     n_terms: int = 10,
     n_examples: int = 3,
-    silhouette_sample: int = 10_000,
+    silhouette_sample: int = 5_000,
 ) -> ClusterResult:
     """``texts`` are prepared texts (normalize.prepare_text). ``vectors``, if given, are one
-    embedding per paper and replace the LSA vectors for the clustering itself."""
+    embedding per paper and replace the LSA vectors for the clustering itself.
+
+    With ``k="auto"`` each candidate k is scored with 3 k-means restarts (enough to rank
+    them; silhouette on a sample of ``silhouette_sample`` papers), and only the chosen k is
+    refitted with 10 restarts."""
     normalizer = normalizer or Normalizer.from_texts(texts)
     vectorizer = TfidfVectorizer(
         analyzer=TermAnalyzer(normalizer), min_df=min_df, max_df=max_df, sublinear_tf=True
@@ -102,18 +128,17 @@ def cluster_papers(
         reduced = TruncatedSVD(n_components=components, random_state=seed).fit_transform(tfidf)
         reduced = UnitLength(copy=False).fit_transform(reduced)
 
-    def fit(n_clusters: int, random_state: int) -> np.ndarray:
-        return KMeans(n_clusters=n_clusters, n_init=10, random_state=random_state).fit_predict(
-            reduced
-        )
+    def fit(n_clusters: int, random_state: int, restarts: int = 10) -> np.ndarray:
+        model = KMeans(n_clusters=n_clusters, n_init=restarts, random_state=random_state)
+        return model.fit_predict(reduced)
 
     if k == "auto":
         candidates = sorted({c for c in k_candidates if 2 <= c < n_docs})
         if not candidates:
             raise ValueError(f"no candidate k is smaller than the number of papers ({n_docs})")
-        rows, fitted = [], {}
+        rows = []
         for n_clusters in candidates:
-            labels = fit(n_clusters, seed)
+            labels = fit(n_clusters, seed, restarts=3)
             score = silhouette_score(
                 reduced,
                 labels,
@@ -121,15 +146,14 @@ def cluster_papers(
                 sample_size=min(silhouette_sample, n_docs),
                 random_state=seed,
             )
-            stability = adjusted_rand_score(labels, fit(n_clusters, seed + 1))
+            stability = adjusted_rand_score(labels, fit(n_clusters, seed + 1, restarts=3))
             rows.append({"k": n_clusters, "silhouette": score, "stability_ari": stability})
-            fitted[n_clusters] = labels
             log.info("k=%d: silhouette %.3f, stability %.2f", n_clusters, score, stability)
         k_selection = pd.DataFrame(rows)
         best = int(
             k_selection.sort_values(["silhouette", "k"], ascending=[False, True]).iloc[0]["k"]
         )
-        raw_labels = fitted[best]
+        raw_labels = fit(best, seed)
     else:
         best = int(k)
         if not 2 <= best < n_docs:
@@ -170,4 +194,6 @@ def cluster_papers(
             "example_titles": [[titles[i] for i in closest] for *_, closest in per_cluster],
         }
     )
-    return ClusterResult(labels=labels, summary=summary, k_selection=k_selection, k=best)
+    return ClusterResult(
+        labels=labels, summary=summary, k_selection=k_selection, k=best, vectors=reduced
+    )

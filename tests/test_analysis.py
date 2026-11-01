@@ -46,7 +46,7 @@ def test_end_to_end_outputs(layout, corpus):
         "themes.csv", "themes_by_year.csv", "themes_by_cluster.csv", "concepts.csv",
         "concepts_by_year.csv", "concepts_by_cluster.csv", "papers_by_year.csv",
         "publication_by_year.csv", "run_info.json", "report.md", "theme_trends.csv",
-        "concept_trends.csv",
+        "concept_trends.csv", "report.html", "cluster_map.csv",
     }  # fmt: skip
     assert {p.name for p in out.iterdir()} == expected
 

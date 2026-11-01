@@ -23,10 +23,11 @@ import sklearn
 
 from informatics import __version__, concepts, tags, trends
 from informatics.cache import TextCache
-from informatics.clustering import DEFAULT_K_CANDIDATES, cluster_papers
+from informatics.clustering import DEFAULT_K_CANDIDATES, cluster_papers, map_2d
 from informatics.embeddings import embedding_text, load_vectors, model_slug
 from informatics.enrich import publication_status
 from informatics.filtering import search_text
+from informatics.html_report import render_html
 from informatics.keywords import THEMES
 from informatics.normalize import NORMALIZATION_VERSION, Normalizer
 from informatics.paths import Layout
@@ -60,7 +61,8 @@ OUTPUT_FILES = (
     "k_selection.csv", "themes.csv", "themes_by_year.csv", "themes_by_cluster.csv",
     "themes_by_set.csv", "concepts.csv", "concepts_by_year.csv", "concepts_by_cluster.csv",
     "concepts_by_set.csv", "theme_trends.csv", "concept_trends.csv", "papers_by_year.csv",
-    "publication_by_year.csv", "countries.csv", "run_info.json", "report.md",
+    "publication_by_year.csv", "countries.csv", "cluster_map.csv", "run_info.json", "report.md",
+    "report.html",
 )  # fmt: skip
 PAPER_COLUMNS = [
     "id", "title", "authors", "categories", "year", "month", "corpora", "cluster", "ai_terms",
@@ -98,6 +100,8 @@ class AnalysisConfig:
     # years with fewer papers are left out.
     trend_min_papers: int = 20
     trend_min_year_papers: int = 20
+    html: bool = True  # also write report.html
+    map_sample: int = 2000  # papers placed on the topic map (0: no map)
 
 
 def combine(frames: list[pd.DataFrame]) -> pd.DataFrame:
@@ -366,6 +370,17 @@ def run_analysis(
         seed=config.seed,
     )
     papers["cluster"] = clusters.labels
+    cluster_map = None
+    if config.html and config.map_sample > 0 and clusters.vectors is not None:
+        rows, coords = map_2d(clusters.vectors, config.map_sample, config.seed)
+        cluster_map = pd.DataFrame(
+            {
+                "id": papers["id"].to_numpy()[rows],
+                "x": coords[:, 0],
+                "y": coords[:, 1],
+                "cluster": clusters.labels[rows],
+            }
+        )
 
     # Themes and concepts ----------------------------------------------------------------------
     if config.themes == "llm":
@@ -468,6 +483,7 @@ def run_analysis(
         "countries.csv": countries,
         "k_selection.csv": None if clusters.k_selection.empty else clusters.k_selection,
         "themes_by_set.csv": theme_tables.get("corpus_group"),
+        "cluster_map.csv": cluster_map,
         "concepts_by_set.csv": concept_tables.get("corpus_group"),
     }
     always = {
@@ -488,30 +504,31 @@ def run_analysis(
         if table is not None:
             write_csv(table, out_dir / name)
     write_json(run_info, out_dir / "run_info.json")
-    report = render_report(
-        {
-            "sets": sets,
-            "papers": papers,
-            "summaries": summaries,
-            "selections": selections,
-            "run_info": run_info,
-            "n_background": n_background,
-            "year_table": year_table,
-            "top_phrases": top_phrases,
-            "distinctive_phrases": distinctive,
-            "rising_phrases": rising,
-            "falling_phrases": falling,
-            "phrases_between_sets": between_sets,
-            "periods": periods,
-            "clusters": clusters,
-            "theme_tables": theme_tables,
-            "concept_tables": concept_tables,
-            "theme_trends": theme_trends,
-            "concept_trends": concept_trends,
-            "publication": publication,
-            "countries": countries,
-        }
-    )
-    write_text(report, out_dir / "report.md")
+    context = {
+        "sets": sets,
+        "papers": papers,
+        "summaries": summaries,
+        "selections": selections,
+        "run_info": run_info,
+        "n_background": n_background,
+        "year_table": year_table,
+        "top_phrases": top_phrases,
+        "distinctive_phrases": distinctive,
+        "rising_phrases": rising,
+        "falling_phrases": falling,
+        "phrases_between_sets": between_sets,
+        "periods": periods,
+        "clusters": clusters,
+        "theme_tables": theme_tables,
+        "concept_tables": concept_tables,
+        "theme_trends": theme_trends,
+        "concept_trends": concept_trends,
+        "publication": publication,
+        "countries": countries,
+        "cluster_map": cluster_map,
+    }
+    write_text(render_report(context), out_dir / "report.md")
+    if config.html:
+        write_text(render_html(context, config.trend_min_year_papers), out_dir / "report.html")
     log.info("wrote results to %s", out_dir)
     return out_dir

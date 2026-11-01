@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>/*CSS*/</style>
+</head>
+<body>
+<div class="viz-root">
+  <header class="page-header">
+    <div>
+      <h1 id="title"></h1>
+      <p class="meta" id="meta"></p>
+    </div>
+    <button id="theme-toggle" class="button" type="button" aria-pressed="false">Dark theme</button>
+  </header>
+  <main id="main"></main>
+  <div id="tooltip" class="tooltip" role="status" aria-live="polite" hidden></div>
+</div>
+<script type="application/json" id="report-data">{{DATA}}</script>
+<script>/*JS*/</script>
+</body>
+</html>
