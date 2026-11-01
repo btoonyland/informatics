@@ -1,0 +1,102 @@
+TOP 100 MOST COMMON PHRASES
+===========================
+1128 occurrences: machine learning
+814 occurrences: deep learning
+378 occurrences: neural networks
+310 occurrences: artificial intelligence
+282 occurrences: state art
+250 occurrences: neural network
+157 occurrences: learning methods
+150 occurrences: real world
+132 occurrences: breast cancer
+122 occurrences: large scale
+119 occurrences: artificial intelligence ai
+119 occurrences: convolutional neural
+119 occurrences: intelligence ai
+118 occurrences: decision making
+118 occurrences: large language
+108 occurrences: learning algorithms
+99 occurrences: real time
+97 occurrences: alzheimer disease
+97 occurrences: precision medicine
+96 occurrences: public health
+92 occurrences: medical imaging
+92 occurrences: random forest
+90 occurrences: learning ml
+89 occurrences: machine learning ml
+88 occurrences: multi omics
+87 occurrences: learning framework
+86 occurrences: deep neural
+86 occurrences: machine learning methods
+85 occurrences: clinical decision
+85 occurrences: non invasive
+83 occurrences: cross validation
+83 occurrences: learning techniques
+83 occurrences: time series
+82 occurrences: gene expression
+80 occurrences: open source
+79 occurrences: high dimensional
+79 occurrences: machine learning algorithms
+78 occurrences: drug discovery
+77 occurrences: clinical practice
+75 occurrences: publicly available
+72 occurrences: clinical trials
+72 occurrences: lung cancer
+71 occurrences: graph neural
+70 occurrences: convolutional neural networks
+69 occurrences: sars cov
+69 occurrences: time consuming
+68 occurrences: transfer learning
+67 occurrences: learning approaches
+65 occurrences: feature selection
+64 occurrences: magnetic resonance
+62 occurrences: multi modal
+61 occurrences: long term
+60 occurrences: deep neural networks
+60 occurrences: self supervised
+59 occurrences: early detection
+59 occurrences: test set
+58 occurrences: language llms
+58 occurrences: large language llms
+58 occurrences: mental health
+58 occurrences: slide images
+57 occurrences: electronic health
+56 occurrences: patient specific
+55 occurrences: decision support
+54 occurrences: clinical settings
+54 occurrences: deep learning methods
+54 occurrences: single cell
+53 occurrences: classification accuracy
+53 occurrences: feature extraction
+53 occurrences: sensitivity specificity
+52 occurrences: cancer patients
+52 occurrences: ground truth
+52 occurrences: natural language
+52 occurrences: pre trained
+51 occurrences: deep learning dl
+51 occurrences: end end
+51 occurrences: learning dl
+51 occurrences: prediction accuracy
+50 occurrences: ai driven
+50 occurrences: cancer types
+50 occurrences: clinical applications
+50 occurrences: supervised learning
+49 occurrences: clinical decision making
+49 occurrences: machine learning techniques
+49 occurrences: patient outcomes
+49 occurrences: support vector
+48 occurrences: clinical trial
+48 occurrences: convolutional neural network
+48 occurrences: graph neural networks
+48 occurrences: high quality
+48 occurrences: magnetic resonance imaging
+48 occurrences: medical image
+48 occurrences: resonance imaging
+47 occurrences: personalized medicine
+46 occurrences: computer vision
+46 occurrences: high throughput
+46 occurrences: logistic regression
+45 occurrences: prostate cancer
+44 occurrences: alzheimer disease ad
+44 occurrences: clinically relevant
+44 occurrences: disease ad

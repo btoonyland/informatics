@@ -1,0 +1,102 @@
+TOP 100 MOST COMMON PHRASES
+===========================
+13142 occurrences: deep learning
+10048 occurrences: machine learning
+5786 occurrences: state art
+5375 occurrences: neural networks
+4073 occurrences: real world
+3945 occurrences: medical image
+3854 occurrences: large language
+3522 occurrences: artificial intelligence
+3119 occurrences: medical imaging
+2956 occurrences: neural network
+2712 occurrences: convolutional neural
+2462 occurrences: decision making
+2363 occurrences: language llms
+2349 occurrences: large language llms
+1927 occurrences: natural language
+1921 occurrences: large scale
+1907 occurrences: image segmentation
+1906 occurrences: learning methods
+1846 occurrences: real time
+1832 occurrences: mental health
+1750 occurrences: computer vision
+1749 occurrences: convolutional neural networks
+1722 occurrences: publicly available
+1693 occurrences: fine tuning
+1671 occurrences: time series
+1670 occurrences: medical images
+1625 occurrences: deep neural
+1617 occurrences: intelligence ai
+1610 occurrences: artificial intelligence ai
+1492 occurrences: pre trained
+1381 occurrences: language processing
+1345 occurrences: natural language processing
+1318 occurrences: medical image segmentation
+1236 occurrences: deep neural networks
+1205 occurrences: open source
+1200 occurrences: high quality
+1180 occurrences: ai systems
+1145 occurrences: transfer learning
+1141 occurrences: end end
+1125 occurrences: clinical decision
+1123 occurrences: domain specific
+1120 occurrences: learning algorithms
+1117 occurrences: learning framework
+1094 occurrences: learning ml
+1094 occurrences: self supervised
+1086 occurrences: machine learning ml
+1075 occurrences: federated learning
+1071 occurrences: learning techniques
+1065 occurrences: supervised learning
+1033 occurrences: deep learning methods
+1010 occurrences: extensive experiments
+994 occurrences: ground truth
+993 occurrences: time consuming
+982 occurrences: electronic health
+969 occurrences: clinical practice
+952 occurrences: decision support
+947 occurrences: convolutional neural network
+940 occurrences: magnetic resonance
+939 occurrences: public health
+929 occurrences: code available
+928 occurrences: learning approaches
+861 occurrences: image classification
+847 occurrences: multi modal
+841 occurrences: networks cnns
+837 occurrences: neural networks cnns
+824 occurrences: recent years
+809 occurrences: fine tuned
+795 occurrences: existing methods
+793 occurrences: health records
+787 occurrences: zero shot
+784 occurrences: black box
+783 occurrences: chest ray
+770 occurrences: breast cancer
+770 occurrences: superior performance
+769 occurrences: computed tomography
+769 occurrences: feature extraction
+744 occurrences: art methods
+744 occurrences: learning dl
+742 occurrences: state art methods
+741 occurrences: deep learning dl
+737 occurrences: pre training
+725 occurrences: electronic health records
+725 occurrences: social media
+718 occurrences: early detection
+717 occurrences: clinical settings
+711 occurrences: question answering
+691 occurrences: address challenges
+672 occurrences: machine learning algorithms
+663 occurrences: reinforcement learning
+659 occurrences: high stakes
+650 occurrences: resonance imaging
+647 occurrences: magnetic resonance imaging
+645 occurrences: fine grained
+637 occurrences: cross validation
+625 occurrences: art performance
+622 occurrences: state art performance
+611 occurrences: clinical decision making
+609 occurrences: anomaly detection
+609 occurrences: classification accuracy
+608 occurrences: recent advances
