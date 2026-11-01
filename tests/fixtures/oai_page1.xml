@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fictional records in arXiv's OAI-PMH "arXiv" metadata format (first page of a list). -->
+<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.openarchives.org/OAI/2.0/ http://www.openarchives.org/OAI/2.0/OAI-PMH.xsd">
+<responseDate>2026-11-01T12:00:00Z</responseDate>
+<request verb="ListRecords" metadataPrefix="arXiv" set="cs">https://oaipmh.arxiv.org/oai</request>
+<ListRecords>
+<record>
+<header>
+ <identifier>oai:arXiv.org:0901.0001</identifier>
+ <datestamp>2009-12-01</datestamp>
+ <setSpec>cs</setSpec>
+</header>
+<metadata>
+ <arXiv xmlns="http://arxiv.org/OAI/arXiv/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://arxiv.org/OAI/arXiv/ http://arxiv.org/OAI/arXiv.xsd">
+ <id>0901.0001</id><created>2009-06-12</created><updated>2009-12-01</updated>
+ <authors><author><keyname>Kovač</keyname><forenames>Ana</forenames></author><author><keyname>Müller</keyname><forenames>Jörg</forenames></author><author><keyname>Smith</keyname><forenames>John</forenames><suffix>Jr</suffix></author></authors>
+ <title>Neural networks for 3D medical scan
+   visualization</title>
+ <categories>cs.AI cs.GR</categories>
+ <comments>12 pages</comments>
+ <license>http://arxiv.org/licenses/nonexclusive-distrib/1.0/</license>
+ <abstract>  We train neural networks to reveal clinically relevant details in 3D
+scans of patients.
+ </abstract>
+ </arXiv>
+</metadata>
+</record>
+<record>
+<header status="deleted">
+ <identifier>oai:arXiv.org:0901.0002</identifier>
+ <datestamp>2010-01-01</datestamp>
+ <setSpec>cs</setSpec>
+</header>
+</record>
+<record>
+<header>
+ <identifier>oai:arXiv.org:1501.00010</identifier>
+ <datestamp>2015-02-01</datestamp>
+ <setSpec>cs</setSpec>
+</header>
+<metadata>
+ <arXiv xmlns="http://arxiv.org/OAI/arXiv/">
+ <id>1501.00010</id><created>2015-01-05</created>
+ <authors><author><keyname>Novak</keyname><forenames>Mira</forenames></author></authors>
+ <title>Graph coloring bounds</title>
+ <categories>cs.DM math.CO</categories>
+ <doi>10.0000/example.1</doi>
+ <abstract>We prove bounds.</abstract>
+ </arXiv>
+</metadata>
+</record>
+<resumptionToken cursor="0" completeListSize="4">token-page-2</resumptionToken>
+</ListRecords>
+</OAI-PMH>

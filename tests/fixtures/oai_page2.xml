@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Last page of the list: the resumption token is empty. 0901.0001 appears again with a newer
+     datestamp, as happens when a record changes while a harvest is running. -->
+<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/">
+<responseDate>2026-11-01T12:00:05Z</responseDate>
+<request verb="ListRecords">https://oaipmh.arxiv.org/oai</request>
+<ListRecords>
+<record>
+<header>
+ <identifier>oai:arXiv.org:0901.0001</identifier>
+ <datestamp>2011-03-04</datestamp>
+ <setSpec>cs</setSpec>
+</header>
+<metadata>
+ <arXiv xmlns="http://arxiv.org/OAI/arXiv/">
+ <id>0901.0001</id><created>2009-06-12</created><updated>2011-03-04</updated>
+ <authors><author><keyname>Kovač</keyname><forenames>Ana</forenames></author></authors>
+ <title>Neural networks for 3D medical scan visualization (revised)</title>
+ <categories>cs.AI cs.GR</categories>
+ <abstract>Revised abstract.</abstract>
+ </arXiv>
+</metadata>
+</record>
+<record>
+<header>
+ <identifier>oai:arXiv.org:cs/0601001</identifier>
+ <datestamp>2011-03-04</datestamp>
+ <setSpec>cs</setSpec>
+</header>
+<metadata>
+ <arXiv xmlns="http://arxiv.org/OAI/arXiv/">
+ <id>cs/0601001</id><created>2006-01-02</created>
+ <authors><author><keyname>Horvat</keyname><forenames>Luka</forenames></author></authors>
+ <title>An old-style identifier</title>
+ <categories>cs.LG</categories>
+ <abstract>Old paper.</abstract>
+ </arXiv>
+</metadata>
+</record>
+<resumptionToken cursor="3" completeListSize="4"/>
+</ListRecords>
+</OAI-PMH>
