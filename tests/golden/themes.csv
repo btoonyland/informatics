@@ -1,0 +1,17 @@
+tag,papers,share,ci_low,ci_high
+ethical,20,0.125,0.0824,0.1852
+privacy,20,0.125,0.0824,0.1852
+regulation,20,0.125,0.0824,0.1852
+bias,17,0.1062,0.0674,0.1636
+accuracy,0,0.0,0.0,0.0234
+adoption,0,0.0,0.0,0.0234
+compliance,0,0.0,0.0,0.0234
+cybersecurity,0,0.0,0.0,0.0234
+diagnostics,0,0.0,0.0,0.0234
+legal,0,0.0,0.0,0.0234
+maturity,0,0.0,0.0,0.0234
+operational efficiency,0,0.0,0.0,0.0234
+personalize,0,0.0,0.0,0.0234
+readiness,0,0.0,0.0,0.0234
+strategic implementation,0,0.0,0.0,0.0234
+transparency,0,0.0,0.0,0.0234

@@ -242,6 +242,8 @@ def render_report(ctx: dict) -> str:
     model = info["config"].get("embeddings")
     method = f"sentence embeddings ({model})" if model else "LSA of TF-IDF terms"
     out.append(f"## Topic clusters (k = {clusters.k}, clustered on {method})\n")
+    if clusters.note:
+        out.append(f"_{clusters.note}_\n")
     if not clusters.k_selection.empty:
         out.append(
             "k was chosen by the highest silhouette score; stability is the adjusted Rand index "

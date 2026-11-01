@@ -1,0 +1,9 @@
+# Old dependency versions at pyproject.toml's lower bounds (the CI job minimum-versions installs
+# with these as constraints, so the bounds stay true). Raise a line when raising a bound.
+numpy==1.24.4
+pandas==2.0.3
+pyarrow==14.0.2
+requests==2.31.0
+scikit-learn==1.3.2
+simplemma==1.0.0
+anthropic==1.0.0

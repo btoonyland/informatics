@@ -1,0 +1,17 @@
+tag,papers,or_per_year,adjusted_or_per_year,adjusted_q_value
+adoption,0,,,
+diagnostics,0,,,
+personalize,0,,,
+operational efficiency,0,,,
+ethical,20,1.007,1.029,0.671
+legal,0,,,
+privacy,20,1.073,1.144,0.174
+cybersecurity,0,,,
+transparency,0,,,
+accuracy,0,,,
+strategic implementation,0,,,
+maturity,0,,,
+readiness,0,,,
+bias,17,1.063,1.115,0.174
+compliance,0,,,
+regulation,20,0.998,0.946,0.508

@@ -44,16 +44,20 @@ def embedding_text(title: object, abstract: object) -> str:
 
 
 def load_encoder(model: str, batch_size: int = 64) -> Encoder:
+    """An encoder for ``model``. The model itself (a download the first time) is only loaded
+    when there is something to encode, so a fully cached run never touches it."""
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError as exc:
         raise RuntimeError(
             'embeddings need sentence-transformers: pip install -e ".[embeddings]"'
         ) from exc
-    encoder = SentenceTransformer(model)
+    loaded: list = []
 
     def encode(texts: list[str]) -> np.ndarray:
-        return encoder.encode(
+        if not loaded:
+            loaded.append(SentenceTransformer(model))
+        return loaded[0].encode(
             texts, batch_size=batch_size, show_progress_bar=True, normalize_embeddings=True
         )
 

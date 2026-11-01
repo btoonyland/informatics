@@ -1,0 +1,32 @@
+tag,papers,share,ci_low,ci_high,dimension
+mental health,29,0.1812,0.1293,0.2482,disease area
+cancer,16,0.1,0.0625,0.1563,disease area
+respiratory,15,0.0938,0.0576,0.1489,disease area
+cardiovascular,0,0.0,0.0,0.0234,disease area
+eye,0,0.0,0.0,0.0234,disease area
+infectious disease,0,0.0,0.0,0.0234,disease area
+metabolic,0,0.0,0.0,0.0234,disease area
+musculoskeletal,0,0.0,0.0,0.0234,disease area
+neurological,0,0.0,0.0,0.0234,disease area
+skin,0,0.0,0.0,0.0234,disease area
+medical images,37,0.2312,0.1727,0.3024,data type
+health records,29,0.1812,0.1293,0.2482,data type
+signals & wearables,28,0.175,0.1239,0.2413,data type
+clinical text,25,0.1562,0.1081,0.2205,data type
+omics & molecules,0,0.0,0.0,0.0234,data type
+speech & audio,0,0.0,0.0,0.0234,data type
+video,0,0.0,0.0,0.0234,data type
+prognosis & risk,36,0.225,0.1672,0.2957,clinical task
+reports & dialogue,34,0.2125,0.1562,0.2822,clinical task
+diagnosis & detection,23,0.1438,0.0977,0.2065,clinical task
+segmentation,16,0.1,0.0625,0.1563,clinical task
+treatment & drugs,14,0.0875,0.0528,0.1415,clinical task
+workflow & operations,0,0.0,0.0,0.0234,clinical task
+deep learning,96,0.6,0.5226,0.6727,AI method
+language & foundation models,49,0.3062,0.2401,0.3815,AI method
+classical machine learning,0,0.0,0.0,0.0234,AI method
+explainability,0,0.0,0.0,0.0234,AI method
+federated & privacy-preserving,0,0.0,0.0,0.0234,AI method
+generative models,0,0.0,0.0,0.0234,AI method
+graph methods,0,0.0,0.0,0.0234,AI method
+reinforcement learning,0,0.0,0.0,0.0234,AI method

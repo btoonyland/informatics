@@ -1,0 +1,31 @@
+phrase,papers,share,contains_selection_term
+reported for setting,160,1.0,False
+results are reported,160,1.0,False
+hospital wards,47,0.29375,True
+neural networks,45,0.28125,True
+deep learning,41,0.25625,True
+large language model,41,0.25625,True
+clinical care,40,0.25,True
+medical practice,35,0.21875,True
+machine learning,33,0.20625,True
+learning for hospital,23,0.14375,True
+consent are raised,20,0.125,False
+data privacy limits,20,0.125,False
+ethical questions,20,0.125,False
+learning for clinical,20,0.125,True
+privacy limits sharing,20,0.125,False
+questions about consent,20,0.125,False
+regulatory approval,20,0.125,False
+sharing between hospitals,20,0.125,True
+tools is discussed,20,0.125,False
+wellbeing surveys,19,0.11875,False
+entity recognition,18,0.1125,False
+text summarisation,18,0.1125,False
+bias across scanner,17,0.10625,False
+contrast agents,17,0.10625,False
+scanner vendors,17,0.10625,False
+suicide risk,17,0.10625,False
+vendors is analysed,17,0.10625,False
+admission notes,16,0.1,False
+benchmark questions,16,0.1,False
+learning for patients,16,0.1,True

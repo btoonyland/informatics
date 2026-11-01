@@ -230,3 +230,14 @@ def test_papers_by_year_shares():
 def test_missing_input_has_helpful_error(layout):
     with pytest.raises(FileNotFoundError, match="informatics filter --set cs"):
         run_analysis(["cs"], layout, config=CONFIG)
+
+
+def test_a_tiny_set_is_analysed_as_one_group(layout, corpus):
+    tiny = corpus[corpus["kind"] == "ai_medicine"].head(4).drop(columns=["kind", "topic"])
+    write_parquet(tiny, layout.raw("tiny"), schema=RAW_SCHEMA)
+    _filter(layout, "tiny")
+    out = run_analysis(["tiny"], layout)  # default settings: too few papers to cluster
+    info = read_json(out / "run_info.json")
+    assert info["counts"]["papers"] == 4 and info["counts"]["k"] == 1
+    report = (out / "report.md").read_text(encoding="utf-8")
+    assert "_Not clustered: " in report and (out / "report.html").exists()

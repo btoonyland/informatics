@@ -25,7 +25,13 @@ import sklearn
 
 from informatics import __version__, concepts, tags, trends
 from informatics.cache import TextCache
-from informatics.clustering import DEFAULT_K_CANDIDATES, cluster_papers, map_2d
+from informatics.clustering import (
+    DEFAULT_K_CANDIDATES,
+    TooLittleData,
+    cluster_papers,
+    map_2d,
+    single_cluster,
+)
 from informatics.embeddings import embedding_text, load_vectors, model_slug
 from informatics.enrich import publication_status
 from informatics.filtering import search_text
@@ -373,19 +379,24 @@ def run_analysis(
             ],
             layout.embeddings(model_slug(config.embeddings)),
         )
-    clusters = cluster_papers(
-        texts,
-        papers["title"].fillna("").tolist(),
-        papers["id"].tolist(),
-        normalizer=normalizer,
-        vectors=vectors,
-        k=config.k,
-        k_candidates=config.k_candidates,
-        min_df=config.cluster_min_df,
-        max_df=config.cluster_max_df,
-        n_components=config.n_components,
-        seed=config.seed,
-    )
+    titles, ids = papers["title"].fillna("").tolist(), papers["id"].tolist()
+    try:
+        clusters = cluster_papers(
+            texts,
+            titles,
+            ids,
+            normalizer=normalizer,
+            vectors=vectors,
+            k=config.k,
+            k_candidates=config.k_candidates,
+            min_df=config.cluster_min_df,
+            max_df=config.cluster_max_df,
+            n_components=config.n_components,
+            seed=config.seed,
+        )
+    except TooLittleData as exc:  # a small set: report it as one group rather than fail
+        log.warning("not clustering: %s", exc)
+        clusters = single_cluster(titles, ids, f"Not clustered: {exc}.")
     papers["cluster"] = clusters.labels
     cluster_map = None
     if config.html and config.map_sample > 0 and clusters.vectors is not None:

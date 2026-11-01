@@ -1,0 +1,18 @@
+id,stratum,ai_terms,medicine_terms,themes,disease area,data type,clinical task,AI method
+0708.2931,strict,"[""neural networks"", ""data mining and recognition""]","[""clinical"", ""care and treatment"", ""conditions""]",[],"[""infectious disease""]","[""omics & molecules""]","[""treatment & drugs""]","[""deep learning""]"
+0806.2925,strict,"[""neural networks""]","[""medical"", ""clinicians and carers"", ""imaging and signals""]",[],"[""cardiovascular""]","[""medical images""]","[""diagnosis & detection""]","[""deep learning""]"
+0810.3671,strict,"[""artificial intelligence""]","[""patient"", ""hospital"", ""medical"", ""doctors""]",[],[],[],"[""workflow & operations""]",[]
+0812.4648,strict,"[""machine learning"", ""data mining and recognition""]","[""medical""]","[""accuracy""]",[],"[""omics & molecules""]",[],[]
+0904.3808,strict,"[""neural networks""]","[""medical"", ""conditions"", ""care and treatment"", ""imaging and signals"", ""clinicians and carers""]","[""accuracy""]","[""neurological""]","[""signals & wearables""]","[""diagnosis & detection""]","[""deep learning""]"
+0910.2029,strict,"[""neural networks"", ""machine learning"", ""intelligent systems""]","[""clinical""]",[],[],[],[],"[""deep learning""]"
+0910.3348,strict,"[""machine learning"", ""classical machine learning"", ""intelligent systems""]","[""medical"", ""patient"", ""care and treatment"", ""imaging and signals"", ""specialties"", ""clinicians and carers""]","[""diagnostics""]",[],"[""medical images""]","[""diagnosis & detection""]",[]
+0912.3926,strict,"[""machine learning"", ""neural networks"", ""learning methods""]","[""patient"", ""medical"", ""conditions""]",[],"[""infectious disease""]",[],[],"[""deep learning""]"
+1004.1230,strict,"[""machine learning"", ""learning methods"", ""classical machine learning""]","[""clinical"", ""medical"", ""hospital"", ""patient"", ""care and treatment"", ""conditions""]",[],"[""cardiovascular""]","[""clinical text""]","[""diagnosis & detection""]","[""classical machine learning""]"
+1004.2280,strict,"[""ai""]","[""medical""]",[],[],[],[],[]
+1008.2521,strict,"[""machine learning""]","[""clinical"", ""imaging and signals"", ""biomedical"", ""conditions"", ""care and treatment""]",[],"[""cancer"", ""metabolic""]","[""medical images""]","[""diagnosis & detection""]",[]
+1009.4566,strict,"[""neural networks"", ""classical machine learning""]","[""medical"", ""care and treatment"", ""biomedical"", ""conditions""]","[""accuracy""]","[""cancer"", ""metabolic""]",[],"[""diagnosis & detection""]","[""deep learning"", ""classical machine learning""]"
+1105.4486,strict,"[""machine learning""]","[""medicine"", ""biomedical"", ""conditions""]",[],"[""neurological""]","[""omics & molecules""]",[],[]
+1206.3777,strict,"[""neural networks""]","[""patient"", ""biomedical"", ""conditions"", ""care and treatment""]",[],"[""cancer""]",[],"[""diagnosis & detection"", ""prognosis & risk"", ""treatment & drugs""]","[""deep learning""]"
+1303.1788,strict,"[""machine learning""]","[""medicine"", ""clinical"", ""conditions"", ""care and treatment""]","[""personalize""]",[],"[""omics & molecules""]","[""treatment & drugs""]",[]
+1305.4942,strict,"[""machine learning"", ""classical machine learning""]","[""clinical"", ""care and treatment"", ""conditions"", ""biomedical""]","[""diagnostics""]","[""cancer""]","[""omics & molecules""]","[""diagnosis & detection""]","[""classical machine learning""]"
+1405.0573,strict,"[""neural networks""]","[""clinical"", ""imaging and signals""]",[],[],"[""medical images"", ""signals & wearables""]",[],"[""deep learning""]"

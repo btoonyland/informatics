@@ -53,6 +53,10 @@ def selection_keys(normalizer: Normalizer) -> set[str]:
     return {normalizer.key_of(p) for p in phrases}
 
 
+class TooLittleData(ValueError):
+    """Too few papers or terms to cluster; the analysis then reports one group instead."""
+
+
 @dataclass
 class ClusterResult:
     labels: np.ndarray  # cluster of each paper; 0 is the largest cluster
@@ -60,6 +64,24 @@ class ClusterResult:
     k_selection: pd.DataFrame  # silhouette and stability per candidate k (empty if k was fixed)
     k: int
     vectors: np.ndarray | None = None  # the unit-length vectors that were clustered
+    note: str = ""  # why the papers were not clustered, if they were not
+
+
+def single_cluster(titles: Sequence[str], ids: Sequence[str], note: str) -> ClusterResult:
+    """Every paper in one group, for sets too small to cluster."""
+    n = len(ids)
+    summary = pd.DataFrame(
+        {
+            "cluster": [0],
+            "papers": [n],
+            "share": [1.0 if n else 0.0],
+            "top_terms": [[]],
+            "example_ids": [list(ids[:3])],
+            "example_titles": [list(titles[:3])],
+        }
+    )
+    k_selection = pd.DataFrame(columns=["k", "silhouette", "stability_ari"])
+    return ClusterResult(np.zeros(n, dtype=int), summary, k_selection, 1, None, note)
 
 
 def map_2d(
@@ -113,12 +135,12 @@ def cluster_papers(
     try:
         tfidf = vectorizer.fit_transform(texts)
     except ValueError as exc:  # e.g. no term is frequent enough
-        raise ValueError(
+        raise TooLittleData(
             f"cannot cluster these papers ({exc}); try a lower --cluster-min-df"
         ) from exc
     n_docs, n_features = tfidf.shape
     if n_features < 3 or n_docs < 3:
-        raise ValueError(f"too little data to cluster ({n_docs} papers, {n_features} terms)")
+        raise TooLittleData(f"too little data to cluster ({n_docs} papers, {n_features} terms)")
     if vectors is not None:
         if len(vectors) != n_docs:
             raise ValueError(f"{len(vectors)} embedding vectors for {n_docs} papers")
@@ -135,7 +157,7 @@ def cluster_papers(
     if k == "auto":
         candidates = sorted({c for c in k_candidates if 2 <= c < n_docs})
         if not candidates:
-            raise ValueError(f"no candidate k is smaller than the number of papers ({n_docs})")
+            raise TooLittleData(f"no candidate k is smaller than the number of papers ({n_docs})")
         rows = []
         for n_clusters in candidates:
             labels = fit(n_clusters, seed, restarts=3)
@@ -157,7 +179,7 @@ def cluster_papers(
     else:
         best = int(k)
         if not 2 <= best < n_docs:
-            raise ValueError(f"k must be between 2 and {n_docs - 1}")
+            raise TooLittleData(f"k must be between 2 and {n_docs - 1}")
         k_selection = pd.DataFrame(columns=["k", "silhouette", "stability_ari"])
         raw_labels = fit(best, seed)
 

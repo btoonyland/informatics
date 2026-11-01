@@ -57,3 +57,27 @@ def oai_error(code: str) -> bytes:
         '<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/">'
         f'<error code="{code}">message for {code}</error></OAI-PMH>'
     ).encode()
+
+
+GOLDEN = FIXTURES.parent / "golden"
+
+
+def check_golden(name: str, table) -> None:
+    """Compare a table with tests/golden/<name>; UPDATE_GOLDEN=1 rewrites the file instead.
+
+    Golden files pin down what the pipeline produces from fixed inputs, so a change in any
+    rule (keywords, normalisation, clustering) shows up as a reviewable diff of the file."""
+    import io
+    import os
+
+    import pandas as pd
+
+    path = GOLDEN / name
+    text = table.to_csv(index=False, lineterminator="\n")
+    if os.environ.get("UPDATE_GOLDEN"):
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return
+    expected = pd.read_csv(path, dtype=str, keep_default_na=False)
+    actual = pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False)
+    pd.testing.assert_frame_equal(actual, expected, check_dtype=False)

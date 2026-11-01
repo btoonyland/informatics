@@ -38,6 +38,7 @@ informatics = ["report_assets/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["live: talks to the real arXiv, PubMed and OpenAlex services (INFORMATICS_LIVE=1)"]
 
 [tool.ruff]
 line-length = 100
