@@ -6,16 +6,24 @@ from typing import Any
 
 import pandas as pd
 
-from informatics.themes import THEME_NAMES
+from informatics import tags
 
 
 def pct(value: float) -> str:
     return "" if pd.isna(value) else f"{100 * value:.1f}%"
 
 
+def pct_ci(share: float, low: float, high: float) -> str:
+    if pd.isna(share):
+        return ""
+    return (
+        f"{100 * share:.1f}% ({100 * low:.0f}-{100 * high:.0f})" if not pd.isna(low) else pct(share)
+    )
+
+
 def _cell(value: Any) -> str:
     if isinstance(value, float):
-        text = f"{value:.2f}"
+        text = "" if pd.isna(value) else f"{value:.2f}"
     elif isinstance(value, (list, tuple)):
         text = ", ".join(map(str, value))
     else:
@@ -25,28 +33,57 @@ def _cell(value: Any) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
-def md_table(df: pd.DataFrame) -> str:
-    if df.empty:
+def md_table(df: pd.DataFrame | None) -> str:
+    if df is None or df.empty:
         return "_(none)_\n"
     lines = ["| " + " | ".join(map(str, df.columns)) + " |", "|" + "---|" * len(df.columns)]
     lines += ["| " + " | ".join(_cell(v) for v in row) + " |" for row in df.itertuples(index=False)]
     return "\n".join(lines) + "\n"
 
 
+def _phrase_table(table: pd.DataFrame, columns: dict[str, str], n: int = 25) -> str:
+    """Selected, renamed columns; shares as percentages; selection-keyword phrases marked *."""
+    t = table.head(n)
+    marked = zip(t["phrase"], t["contains_selection_term"], strict=True)
+    out = pd.DataFrame({"phrase": [p + (" *" if s else "") for p, s in marked]})
+    for source, label in columns.items():
+        out[label] = t[source].map(pct).to_numpy() if "share" in source else t[source].to_numpy()
+    return md_table(out)
+
+
+def _tag_overview(table: pd.DataFrame, label: str) -> str:
+    shown = table[table["papers"] > 0]
+    rows = zip(shown["share"], shown["ci_low"], shown["ci_high"], strict=True)
+    return md_table(
+        pd.DataFrame(
+            {
+                label: shown["tag"],
+                "papers": shown["papers"],
+                "share (95% interval)": [pct_ci(s, lo, hi) for s, lo, hi in rows],
+            }
+        )
+    )
+
+
+def _top_tags(table: pd.DataFrame, n: int) -> list[str]:
+    return table[table["papers"] > 0].head(n)["tag"].tolist()
+
+
 def render_report(ctx: dict) -> str:
     """``ctx`` holds the tables produced by :func:`informatics.analysis.run_analysis`."""
-    papers: pd.DataFrame = ctx["papers"]
     sets: list[str] = ctx["sets"]
     summaries: dict = ctx["summaries"]
     info: dict = ctx["run_info"]
+    counts = info["counts"]
     out = [f"# AI in medicine on arXiv: {' + '.join(sets)}\n"]
     commit = (info.get("git_commit") or "unknown")[:10]
     out.append(
-        f"Generated {info['created_utc']} by `informatics analyze` "
-        f"(version {info['informatics_version']}, commit {commit}). "
-        "All tables are also saved as CSV next to this file.\n"
+        f"Generated {info['created_utc']} by `informatics analyze` (version "
+        f"{info['informatics_version']}, commit {commit}). Every table is also saved as CSV "
+        "next to this file; shares come with 95% intervals where noted.\n"
     )
 
+    # Papers ----------------------------------------------------------------------------------
     out.append("## Papers\n")
     for name in sets:
         summary = summaries.get(name)
@@ -56,12 +93,14 @@ def render_report(ctx: dict) -> str:
                 f"- **{name}**: {c['selected']:,} of {c['scanned']:,} papers selected "
                 f"({pct(c['selected'] / max(c['scanned'], 1))}), requiring at least "
                 f"{cfg['min_ai_hits']} AI and {cfg['min_medicine_hits']} medicine keyword "
-                "hit(s) in title + abstract."
+                f"hit(s) in title + abstract. Excluded before selection: "
+                f"{c.get('excluded_withdrawn', 0):,} withdrawn, "
+                f"{c.get('excluded_non_english', 0):,} not in English."
             )
-    cross = int((papers["corpora"].map(len) > 1).sum())
     out.append(
-        f"- Analysed together: **{len(papers):,} papers**; {cross:,} are cross-listed in more "
-        "than one set and counted once."
+        f"- Analysed together: **{counts['papers']:,} papers** after dropping "
+        f"{counts['near_duplicates_dropped']:,} near-duplicates (the same paper under another ID); "
+        f"{counts['cross_listed']:,} are cross-listed in more than one set and counted once."
     )
     out.append(
         f"- Comparison set: {ctx['n_background']:,} randomly sampled papers that match the AI "
@@ -69,9 +108,9 @@ def render_report(ctx: dict) -> str:
     )
     out.append(
         "- The keyword rule's precision and recall are unknown until a labelled sample is "
-        "evaluated (`informatics label-sample` / `label-evaluate`).\n"
-    )  # fmt: skip
-
+        "evaluated (`informatics label-sample` / `label-evaluate`; for themes, "
+        "`label-themes-sample` / `label-themes-evaluate`).\n"
+    )
     out.append("### Papers per year\n")
     out.append("Years come from the arXiv identifier (month of first submission).\n")
     years = ctx["year_table"].copy()
@@ -84,70 +123,157 @@ def render_report(ctx: dict) -> str:
     ]
     out.append(md_table(years))
 
+    # Phrases ---------------------------------------------------------------------------------
     out.append("## Phrases\n")
     out.append(
-        "Counts are numbers of papers containing the phrase. Phrases marked * contain a keyword "
-        "the papers were selected on, so they are common by construction.\n"
+        "Counts are numbers of papers. Before counting, texts are normalised (normalize.py): TeX "
+        "and special characters are cleaned, acronyms defined in an abstract are replaced by "
+        "their long form, British spellings become American, words are lemmatised and compounds "
+        'unified, so "fine-tuned", "fine tuning" and "finetuning" count as one phrase. Each '
+        "phrase is shown in its most common written form. Phrases marked * contain a keyword the "
+        "papers were selected on, so they are common by construction.\n"
     )
     out.append("### Most common phrases\n")
-    top = ctx["top_phrases"].head(30)
-    marked = [
-        p + (" *" if s else "")
-        for p, s in zip(top["phrase"], top["contains_selection_term"], strict=True)
-    ]
-    out.append(md_table(pd.DataFrame({
-        "phrase": marked,
-        "papers": top["papers"],
-        "share of papers": top["share"].map(pct),
-    })))  # fmt: skip
-    distinctive = ctx["distinctive_phrases"]
-    if distinctive is not None:
+    out.append(_phrase_table(ctx["top_phrases"], {"papers": "papers", "share": "share of papers"}))
+    if ctx["distinctive_phrases"] is not None:
         out.append("### Phrases that set these papers apart from AI-only papers\n")
         out.append(
-            "Ranked by the z-score of a smoothed log-odds ratio (see `phrases.log_odds`): "
-            "phrases much more common here than in AI papers without medicine keywords.\n"
+            "Ranked by the z-score of a smoothed log-odds ratio (`phrases.log_odds`): phrases "
+            "much more common here than in AI papers without medicine keywords.\n"
         )
-        d = distinctive.head(30)
-        out.append(md_table(pd.DataFrame({
-            "phrase": d["phrase"],
-            "share of these papers": d["share"].map(pct),
-            "share of AI-only papers": d["background_share"].map(pct),
-            "z": d["z"],
-        })))  # fmt: skip
+        labels = {
+            "share": "share of these papers",
+            "background_share": "share of AI-only papers",
+            "z": "z",
+        }
+        out.append(_phrase_table(ctx["distinctive_phrases"], labels))
+    if ctx["periods"] and ctx["rising_phrases"] is not None:
+        (e0, e1), (r0, r1) = ctx["periods"]
+        columns = {"recent_share": f"{r0}-{r1}", "earlier_share": f"{e0}-{e1}", "z": "z"}
+        out.append(f"### Rising phrases ({r0}-{r1} compared with {e0}-{e1})\n")
+        out.append(_phrase_table(ctx["rising_phrases"], columns))
+        out.append(f"### Falling phrases ({r0}-{r1} compared with {e0}-{e1})\n")
+        out.append(_phrase_table(ctx["falling_phrases"], columns))
+    if ctx["phrases_between_sets"] is not None:
+        a, b = sets[:2]
+        out.append(f"### Phrases that differ between {a} and {b}\n")
+        out.append(
+            f"Papers only in {a} compared with papers only in {b}; positive z: more common in {a}."
+            " The full list is in phrases_between_sets.csv.\n"
+        )
+        table = ctx["phrases_between_sets"]
+        cols = {f"{a}_share": a, f"{b}_share": b, "z": "z"}
+        out.append(f"More common in {a}:\n")
+        out.append(_phrase_table(table[table["z"] > 0], cols, 15))
+        out.append(f"More common in {b}:\n")
+        out.append(_phrase_table(table[table["z"] < 0].sort_values("z"), cols, 15))
 
+    # Clusters --------------------------------------------------------------------------------
     clusters = ctx["clusters"]
-    out.append(f"## Topic clusters (k = {clusters.k})\n")
+    model = info["config"].get("embeddings")
+    method = f"sentence embeddings ({model})" if model else "LSA of TF-IDF terms"
+    out.append(f"## Topic clusters (k = {clusters.k}, clustered on {method})\n")
     if not clusters.k_selection.empty:
         out.append(
             "k was chosen by the highest silhouette score; stability is the adjusted Rand index "
             "between two runs with different seeds (1 = identical clusters).\n"
         )
         out.append(md_table(clusters.k_selection))
+    by_cluster = ctx["concept_tables"]["cluster"]
     for row in clusters.summary.itertuples(index=False):
         out.append(f"### Cluster {row.cluster}: {row.papers:,} papers ({pct(row.share)})\n")
         out.append(f"Distinctive terms: {', '.join(row.top_terms)}\n")
+        mine = by_cluster[(by_cluster["cluster"] == row.cluster) & (by_cluster["papers"] > 0)]
+        leading = [
+            f"{part.iloc[0]['tag']} ({pct(part.iloc[0]['share'])})"
+            for _, part in mine.sort_values("share", ascending=False).groupby(
+                "dimension", sort=False
+            )
+        ]
+        if leading:
+            out.append(f"Most common concepts: {', '.join(leading)}\n")
         out.append("Typical papers:\n")
         out += [f"- {t} ({i})" for t, i in zip(row.example_titles, row.example_ids, strict=True)]
         out.append("")
 
+    # Themes and concepts --------------------------------------------------------------------
+    themes = ctx["theme_tables"]
     out.append("## Themes\n")
     out.append(
-        "Share of papers whose title or abstract mentions each theme (keyword match, see "
-        "`keywords.THEMES`). `accuracy` appears in most machine-learning papers, so treat it as "
-        "a baseline.\n"
+        "Share of papers whose title or abstract mentions each theme (keyword match with "
+        "exclusions, `keywords.THEMES`). `accuracy` appears in most machine-learning papers, "
+        "so treat it as a baseline.\n"
     )
-    themes = ctx["themes"].copy()
-    themes["share"] = themes["share"].map(pct)
-    out.append(md_table(themes))
-    for title, key, column, min_papers in (
-        ("By year (years with at least 20 papers)", "themes_by_year", "year", 20),
-        ("By cluster", "themes_by_cluster", "cluster", 0),
-    ):
-        table = ctx[key]
-        table = table[table["papers"] >= min_papers].copy()
-        mentioned = [t for t in THEME_NAMES if t in table and table[t].sum() > 0]
-        for t in mentioned:
-            table[t] = table[t].map(pct)
-        out.append(f"### {title}\n")
-        out.append(md_table(table[[column, "papers"] + mentioned]))
+    out.append(_tag_overview(themes["overall"], "theme"))
+    top_themes = _top_tags(themes["overall"], 6)
+    by_year = themes["year"][themes["year"]["papers_in_group"] >= 20]
+    out.append("### Themes by year (years with at least 20 papers; 95% intervals)\n")
+    out.append(md_table(tags.pivot_shares(by_year, "year", top_themes) if len(by_year) else None))
+    out.append("### Themes by cluster\n")
+    out.append(md_table(tags.pivot_shares(themes["cluster"], "cluster", top_themes, with_ci=False)))
+    if "corpus_group" in themes:
+        out.append("### Themes by set\n")
+        out.append(md_table(tags.pivot_shares(themes["corpus_group"], "corpus_group", top_themes)))
+
+    concepts = ctx["concept_tables"]
+    out.append("## Concepts\n")
+    out.append(
+        "What the papers are about, along four dimensions (curated patterns in concepts.py; a "
+        "paper can have several concepts or none).\n"
+    )
+    for dimension, part in concepts["overall"].groupby("dimension", sort=False):
+        out.append(f"### {dimension[0].upper()}{dimension[1:]}\n")
+        out.append(_tag_overview(part, "concept"))
+        leading = _top_tags(part, 5)
+        part_years = concepts["year"][(concepts["year"]["dimension"] == dimension)
+                                      & (concepts["year"]["papers_in_group"] >= 20)]  # fmt: skip
+        if len(part_years) and leading:
+            out.append("By year (years with at least 20 papers):\n")
+            out.append(md_table(tags.pivot_shares(part_years, "year", leading, with_ci=False)))
+        if "corpus_group" in concepts:
+            part_sets = concepts["corpus_group"][concepts["corpus_group"]["dimension"] == dimension]
+            out.append("By set:\n")
+            out.append(md_table(tags.pivot_shares(part_sets, "corpus_group", leading)))
+
+    # Publication -----------------------------------------------------------------------------
+    publication = ctx["publication"]
+    out.append("## Publication\n")
+    out.append(
+        "Evidence that a paper was published, from arXiv's own fields: a journal reference, or "
+        "comments saying accepted / to appear / published. Absence of evidence is not evidence "
+        "that a paper was never published.\n"
+    )
+    if len(publication):
+        table = pd.DataFrame({
+            "year": publication["year"],
+            "papers": publication["papers"],
+            "journal reference": publication["share_journal_ref"].map(pct),
+            "accepted (comments)": publication["share_accepted_comment"].map(pct),
+            "any evidence": [pct_ci(s, lo, hi) for s, lo, hi in zip(
+                publication["share_any_evidence"], publication["any_evidence_ci_low"],
+                publication["any_evidence_ci_high"], strict=True)],
+        })  # fmt: skip
+        out.append(md_table(table))
+    if "share_in_openalex" in publication:
+        out.append("### From OpenAlex\n")
+        out.append(
+            f"{counts['openalex_matched']:,} papers were found in OpenAlex. Shares below are "
+            "among those papers: published in a journal or conference, with at least one author "
+            "at a healthcare institution or at a company.\n"
+        )
+        oa = pd.DataFrame(
+            {"year": publication["year"], "in OpenAlex": publication["share_in_openalex"].map(pct)}
+        )
+        for name, label in (("journal_or_conference", "journal or conference"),
+                            ("healthcare_author", "healthcare author"),
+                            ("company_author", "company author")):  # fmt: skip
+            oa[label] = [pct_ci(s, lo, hi) for s, lo, hi in zip(
+                publication[f"share_{name}"], publication[f"{name}_ci_low"],
+                publication[f"{name}_ci_high"], strict=True)]  # fmt: skip
+        oa["median citations"] = publication["median_citations"]
+        out.append(md_table(oa))
+        if ctx["countries"] is not None:
+            out.append("Countries of the authors' institutions (top 15):\n")
+            top = ctx["countries"].head(15)
+            out.append(md_table(top.assign(share=top["share"].map(pct))))
     return "\n".join(out)

@@ -8,6 +8,10 @@ one stratum (used both for the summary and for measuring the filter, see ``valid
 * ``medicine_only``   medicine terms but no AI terms
 * ``neither``         no terms at all
 * ``below_threshold`` both kinds of terms, but fewer than ``--min-*-hits`` requires
+* ``excluded``        withdrawn, or (among papers with AI terms) not written in English
+
+Selected papers are also checked for near-duplicates (the same paper under two IDs); the extra
+copies stay in the file with ``duplicate_of`` set and are left out of the analysis.
 """
 
 from __future__ import annotations
@@ -23,12 +27,15 @@ import pandas as pd
 import pyarrow as pa
 
 from informatics import keywords
+from informatics.cleaning import is_non_english, is_withdrawn, near_duplicates
 from informatics.records import RAW_SCHEMA
 from informatics.storage import iter_parquet, write_json, write_parquet
 
 log = logging.getLogger(__name__)
 
-STRATA = ("selected", "ai_only", "medicine_only", "neither", "below_threshold")
+STRATA = ("selected", "ai_only", "medicine_only", "neither", "below_threshold", "excluded")
+# Strata whose relevant papers count as missed by the keyword rule (see validation.py).
+MISSED_STRATA = ("ai_only", "medicine_only", "neither", "below_threshold")
 _STR_LIST = pa.list_(pa.string())
 SELECTED_SCHEMA = pa.schema(
     list(RAW_SCHEMA)
@@ -39,6 +46,7 @@ SELECTED_SCHEMA = pa.schema(
         pa.field("medicine_hits", pa.int32()),
         pa.field("themes", _STR_LIST),
         pa.field("theme_terms", _STR_LIST),
+        pa.field("duplicate_of", pa.string()),
         pa.field("corpus", pa.string()),
     ]
 )
@@ -81,8 +89,27 @@ def assign_strata(ai_hits: pd.Series, medicine_hits: pd.Series, config: FilterCo
     return pd.Series(labels, index=ai_hits.index, dtype=object)
 
 
+def exclusion_reason(df: pd.DataFrame, ai_hits: pd.Series) -> pd.Series:
+    """ "withdrawn", "non-english" or None. Language is only checked for papers with AI terms (the
+    only ones that can be selected or sampled), which keeps the filter fast."""
+    comments = df["comments"] if "comments" in df else pd.Series(None, index=df.index)
+    reason = pd.Series(
+        [
+            "withdrawn" if is_withdrawn(c, a) else None
+            for c, a in zip(comments, df["abstract"], strict=True)
+        ],
+        index=df.index,
+        dtype=object,
+    )
+    check = reason.isna() & (ai_hits >= 1)
+    if check.any():
+        raw = df.loc[check, "title"].fillna("") + ". " + df.loc[check, "abstract"].fillna("")
+        reason.loc[check] = raw.map(lambda t: "non-english" if is_non_english(t) else None)
+    return reason
+
+
 def annotate(df: pd.DataFrame, config: FilterConfig) -> pd.DataFrame:
-    """Matched AI/medicine terms, hit counts and stratum for each paper."""
+    """Matched AI/medicine terms, hit counts, exclusion reason and stratum for each paper."""
     text = search_text(df)
     ai = text.map(keywords.AI.hits)
     medicine = text.map(keywords.MEDICINE.hits)
@@ -91,7 +118,9 @@ def annotate(df: pd.DataFrame, config: FilterConfig) -> pd.DataFrame:
     out["ai_hits"] = ai.map(len).astype("int32")
     out["medicine_terms"] = medicine.map(_distinct)
     out["medicine_hits"] = medicine.map(len).astype("int32")
-    out["stratum"] = assign_strata(out["ai_hits"], out["medicine_hits"], config)
+    out["exclusion"] = exclusion_reason(df, out["ai_hits"])
+    strata = assign_strata(out["ai_hits"], out["medicine_hits"], config)
+    out["stratum"] = strata.where(out["exclusion"].isna(), "excluded")
     return out
 
 
@@ -119,6 +148,7 @@ def run_filter(
     config = config or FilterConfig()
     rng = np.random.default_rng(config.seed)
     strata: Counter[str] = Counter()
+    exclusions: Counter[str] = Counter()
     by_year: dict[int, Counter[str]] = defaultdict(Counter)
     selected_parts: list[pd.DataFrame] = []
     reservoir: pd.DataFrame | None = None
@@ -126,6 +156,7 @@ def run_filter(
     for chunk in iter_parquet(raw_path, batch_size=config.batch_size):
         chunk = pd.concat([chunk, annotate(chunk, config)], axis=1)
         strata.update(chunk["stratum"].value_counts().to_dict())
+        exclusions.update(chunk["exclusion"].dropna().value_counts().to_dict())
         is_ai = chunk["ai_hits"] >= config.min_ai_hits
         is_selected = chunk["stratum"] == "selected"
         _add_year_counts(by_year, "scanned", chunk["year"])
@@ -142,13 +173,16 @@ def run_filter(
         log.info("scanned %d papers: %d selected so far", sum(strata.values()), strata["selected"])
 
     selected = _finish(selected_parts, SELECTED_SCHEMA, set_name)
+    duplicates = near_duplicates(selected["id"].tolist(), search_text(selected).tolist())
+    selected["duplicate_of"] = selected["id"].map(duplicates).astype(object)
     background = _finish(
         [] if reservoir is None else [reservoir.drop(columns="_key")], BACKGROUND_SCHEMA, set_name
     )
     write_parquet(selected[SELECTED_SCHEMA.names], selected_path, schema=SELECTED_SCHEMA)
     write_parquet(background[BACKGROUND_SCHEMA.names], background_path, schema=BACKGROUND_SCHEMA)
 
-    theme_counts = selected["themes"].explode().dropna().value_counts()
+    theme_counts = selected.loc[selected["duplicate_of"].isna(), "themes"].explode()
+    theme_counts = theme_counts.dropna().value_counts()
     summary = {
         "set": set_name,
         "raw": str(raw_path),
@@ -157,6 +191,9 @@ def run_filter(
         "counts": {
             "scanned": sum(strata.values()),
             **{s: strata.get(s, 0) for s in STRATA},
+            "excluded_withdrawn": exclusions.get("withdrawn", 0),
+            "excluded_non_english": exclusions.get("non-english", 0),
+            "near_duplicates": len(duplicates),
             "background_sample": len(background),
         },
         "by_year": {str(y): dict(by_year[y]) for y in sorted(by_year)},

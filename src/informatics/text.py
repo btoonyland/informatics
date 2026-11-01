@@ -1,11 +1,12 @@
-"""Tokenisation and phrase extraction, shared by the phrase counts and the clustering.
+"""Tokenisation rules shared by the phrase counts and the clustering (see also normalize.py).
 
 Two rules fix the artefacts of the first version (``"low back pain"`` counted as ``"low pain"``,
 ``"large language models (LLMs)"`` as ``"large language llms"``):
 
 * stop words are only checked at a phrase's first and last word, never deleted from the middle,
-  so words on either side of a stop word are never glued together;
-* punctuation and brackets end a phrase, so ``"(AI)"`` cannot attach to the words before it.
+  so words on either side of a stop word are never glued together (:func:`edge_ok`);
+* punctuation and brackets end a phrase, so ``"(AI)"`` cannot attach to the words before it
+  (:func:`segments`).
 
 Tokens keep digits, hyphens and accents: ``x-ray``, ``covid-19``, ``u-net``, ``3d``, ``naïve``.
 """
@@ -37,23 +38,13 @@ def segments(text: str) -> list[list[str]]:
     return [tokens for part in _SEGMENT.split(text) if (tokens := _TOKEN.findall(part))]
 
 
-def _edge_ok(token: str) -> bool:
+def edge_ok(token: str) -> bool:
+    """May this word start or end a phrase? (Not a stop word, a number or a single letter.)"""
     return len(token) > 1 and token not in EDGE_STOP_WORDS and not token.isdigit()
 
 
-def phrases(text: str, n_min: int = 2, n_max: int = 3) -> list[str]:
-    """All n-grams (n_min..n_max) whose first and last words are not stop words or numbers."""
-    out = []
-    for tokens in segments(text):
-        for n in range(n_min, n_max + 1):
-            for i in range(len(tokens) - n + 1):
-                if _edge_ok(tokens[i]) and _edge_ok(tokens[i + n - 1]):
-                    out.append(" ".join(tokens[i : i + n]))
-    return out
-
-
 def singular(word: str) -> str:
-    """Rough singular form, used only as a key to merge "neural network(s)"-style pairs."""
+    """Rough singular form: the fallback for words the lemmatizer does not know ("llms")."""
     if (
         len(word) <= 3
         or word in _NOT_PLURAL
@@ -66,10 +57,3 @@ def singular(word: str) -> str:
     if word.endswith("sses"):
         return word[:-2]
     return word[:-1]
-
-
-def fold(phrase: str) -> str:
-    """Merge key for a phrase: last word made singular ("clinical trials" -> "clinical trial")."""
-    words = phrase.split(" ")
-    words[-1] = singular(words[-1])
-    return " ".join(words)

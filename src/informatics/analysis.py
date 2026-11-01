@@ -1,4 +1,11 @@
-"""Analyse the selected papers of one or more sets and write tables plus a Markdown report."""
+"""Analyse the selected papers of one or more sets and write tables plus a Markdown report.
+
+Steps: combine the sets (cross-listed papers once) -> drop near-duplicates -> prepare and
+normalise the texts (normalize.py, cached) -> phrases (most common, distinctive compared with
+AI-only papers, rising and falling between periods, different between sets) -> topic clusters
+(LSA or sentence embeddings) -> themes and concepts (shares with 95% intervals, by year, cluster
+and set) -> publication data -> CSV/Parquet tables and report.md.
+"""
 
 from __future__ import annotations
 
@@ -14,18 +21,26 @@ import pandas as pd
 import pyarrow as pa
 import sklearn
 
-from informatics import __version__, themes
+from informatics import __version__, concepts, tags
+from informatics.cache import TextCache
 from informatics.clustering import DEFAULT_K_CANDIDATES, cluster_papers
+from informatics.embeddings import embedding_text, load_vectors, model_slug
+from informatics.enrich import publication_status
+from informatics.filtering import search_text
+from informatics.keywords import THEMES
+from informatics.normalize import NORMALIZATION_VERSION, Normalizer
 from informatics.paths import Layout
 from informatics.phrases import (
+    PhraseIndex,
+    compare_rows,
     contains_selection_term,
-    document_frequencies,
     frequency_table,
     keep_maximal,
     log_odds,
     surface_forms,
 )
 from informatics.report import render_report
+from informatics.stats import wilson_interval
 from informatics.storage import (
     read_json,
     read_parquet,
@@ -38,13 +53,22 @@ from informatics.storage import (
 log = logging.getLogger(__name__)
 
 OUTPUT_FILES = (
-    "papers.parquet", "papers.csv", "top_phrases.csv", "distinctive_phrases.csv", "clusters.csv",
+    "papers.parquet", "papers.csv", "top_phrases.csv", "distinctive_phrases.csv",
+    "rising_phrases.csv", "falling_phrases.csv", "phrases_between_sets.csv", "clusters.csv",
     "k_selection.csv", "themes.csv", "themes_by_year.csv", "themes_by_cluster.csv",
-    "papers_by_year.csv", "run_info.json", "report.md",
+    "themes_by_set.csv", "concepts.csv", "concepts_by_year.csv", "concepts_by_cluster.csv",
+    "concepts_by_set.csv", "papers_by_year.csv", "publication_by_year.csv", "countries.csv",
+    "run_info.json", "report.md",
 )  # fmt: skip
 PAPER_COLUMNS = [
     "id", "title", "authors", "categories", "year", "month", "corpora", "cluster", "ai_terms",
-    "medicine_terms", "themes", "theme_terms", "doi", "journal_ref", "abstract",
+    "medicine_terms", "themes", "theme_terms", *[concepts.column(d) for d in concepts.CONCEPTS],
+    "publication_status", "doi", "journal_ref", "comments", "venue", "venue_type", "field",
+    "institution_types", "countries", "cited_by_count", "abstract",
+]  # fmt: skip
+OPENALEX_COLUMNS = [
+    "openalex_id", "matched_by", "venue", "venue_type", "field", "institution_types",
+    "countries", "cited_by_count",
 ]  # fmt: skip
 
 
@@ -61,6 +85,11 @@ class AnalysisConfig:
     cluster_max_df: float = 0.5
     n_components: int = 100
     seed: int = 42
+    # Periods for rising/falling phrases; default: the last 3 years against the 4 before.
+    recent: tuple[int, int] | None = None
+    earlier: tuple[int, int] | None = None
+    embeddings: str | None = None  # model whose vectors `informatics embed` cached
+    use_cache: bool = True
 
 
 def combine(frames: list[pd.DataFrame]) -> pd.DataFrame:
@@ -94,6 +123,57 @@ def papers_by_year(papers: pd.DataFrame, summaries: dict[str, dict | None]) -> p
     return table.reset_index()
 
 
+def default_periods(years: np.ndarray) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    """(earlier, recent): the last three years with papers against the four years before."""
+    valid = years[~np.isnan(years)]
+    if not valid.size:
+        return None
+    last = int(valid.max())
+    return (last - 6, last - 3), (last - 2, last)
+
+
+def _share(row: dict, name: str, hits: int, n: int) -> None:
+    low, high = wilson_interval(hits, n)
+    row[f"share_{name}"] = hits / n if n else np.nan
+    row[f"{name}_ci_low"], row[f"{name}_ci_high"] = low, high
+
+
+def publication_by_year(papers: pd.DataFrame, with_openalex: bool) -> pd.DataFrame:
+    """Per year: evidence of publication from arXiv's fields and, if enriched, from OpenAlex
+    (OpenAlex shares are among the papers OpenAlex matched)."""
+    rows = []
+    for year, group in papers.dropna(subset=["year"]).groupby("year"):
+        n = len(group)
+        status = group["publication_status"]
+        row = {
+            "year": int(year),
+            "papers": n,
+            "share_journal_ref": float((status == "journal reference").mean()),
+            "share_accepted_comment": float((status == "accepted (comments)").mean()),
+        }
+        _share(row, "any_evidence", int((status != "no evidence").sum()), n)
+        if with_openalex:
+            matched = group[group["openalex_id"].notna()]
+            row["share_in_openalex"] = len(matched) / n
+            m = len(matched)
+            published = int(matched["venue_type"].isin(["journal", "conference"]).sum())
+            _share(row, "journal_or_conference", published, m)
+            for kind in ("healthcare", "company"):
+                hits = int(matched["institution_types"].map(lambda t, k=kind: k in t).sum())
+                _share(row, f"{kind}_author", hits, m)
+            row["median_citations"] = matched["cited_by_count"].median() if m else np.nan
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def countries_table(papers: pd.DataFrame) -> pd.DataFrame:
+    matched = papers[papers["openalex_id"].notna()]
+    counts = matched["countries"].explode().dropna().value_counts()
+    table = counts.rename_axis("country").reset_index(name="papers")
+    table["share"] = table["papers"] / max(len(matched), 1)
+    return table
+
+
 def _git_commit() -> str | None:
     try:
         commit = subprocess.run(
@@ -107,6 +187,25 @@ def _git_commit() -> str | None:
     return commit + ("-dirty" if dirty else "")
 
 
+def _renamed(a: str, b: str) -> dict[str, str]:
+    """Column names for a log-odds table comparing group ``a`` with group ``b``."""
+    return {
+        "papers": f"{a}_papers",
+        "share": f"{a}_share",
+        "background_papers": f"{b}_papers",
+        "background_share": f"{b}_share",
+    }
+
+
+def _with_phrases(table: pd.DataFrame | None, surfaces: dict[str, str]) -> pd.DataFrame | None:
+    if table is None:
+        return None
+    table = table.copy()
+    table.insert(0, "phrase", table["key"].map(lambda k: surfaces.get(k, k)))
+    table["contains_selection_term"] = table["phrase"].map(contains_selection_term)
+    return table.drop(columns="key")
+
+
 def run_analysis(
     sets: list[str],
     layout: Layout | None = None,
@@ -117,7 +216,7 @@ def run_analysis(
     config = config or AnalysisConfig()
     out_dir = Path(out_dir) if out_dir else layout.results(sets)
 
-    frames, backgrounds, summaries, inputs = [], [], {}, {}
+    frames, backgrounds, enriched, summaries, inputs = [], [], [], {}, {}
     for name in sets:
         selected_path = layout.selected(name)
         if not selected_path.exists():
@@ -131,46 +230,104 @@ def run_analysis(
         use_bg = config.use_background and background_path.exists()
         if use_bg:
             backgrounds.append(read_parquet(background_path))
+        if layout.openalex(name).exists():
+            enriched.append(read_parquet(layout.openalex(name)))
         inputs[name] = {
             "selected": str(selected_path),
             "background": str(background_path) if use_bg else None,
+            "openalex": str(layout.openalex(name)) if layout.openalex(name).exists() else None,
         }
 
     papers = combine(frames)
+    duplicates = papers["duplicate_of"].notna() if "duplicate_of" in papers else None
+    n_duplicates = int(duplicates.sum()) if duplicates is not None else 0
+    if n_duplicates:
+        papers = papers[~duplicates].reset_index(drop=True)
     if papers.empty:
         raise ValueError("there are no selected papers to analyse")
+    papers["corpus_group"] = papers["corpora"].map("+".join)
     background = combine(backgrounds) if backgrounds else None
     if background is not None:
-        background = background[~background["id"].isin(papers["id"])]
+        background = background[~background["id"].isin(papers["id"])].reset_index(drop=True)
     n_background = 0 if background is None else len(background)
-    texts = paper_texts(papers)
     log.info("analysing %d papers against %d AI-only papers", len(papers), n_background)
 
-    # Phrases --------------------------------------------------------------------------------
-    counts, n_docs = document_frequencies(texts)
-    frequent = keep_maximal(
-        {k: c for k, c in counts.items() if c >= config.min_df}, config.maximal_ratio
+    # Prepared and normalised text -------------------------------------------------------------
+    cache = TextCache(layout.text_cache() if config.use_cache else None)
+    texts = cache.prepare(papers["id"].tolist(), paper_texts(papers))
+    bg_texts = (
+        cache.prepare(background["id"].tolist(), paper_texts(background)) if n_background else []
     )
-    del counts
+    cache.save()
+    normalizer = Normalizer.from_texts(texts + bg_texts)
+
+    # Phrases ----------------------------------------------------------------------------------
+    index = PhraseIndex.build(texts, normalizer, 2, 3, config.min_df)
+    frequent = keep_maximal(index.counts(), config.maximal_ratio)
     top_keys = sorted(frequent, key=lambda k: (-frequent[k], k))[: config.top]
     distinctive = None
-    if n_background:
-        bg_counts, n_bg = document_frequencies(paper_texts(background), vocabulary=set(frequent))
-        distinctive = log_odds(frequent, n_docs, bg_counts, n_bg, config.prior).head(config.top)
-    needed = set(top_keys) | (set(distinctive["key"]) if distinctive is not None else set())
-    surfaces = surface_forms(texts, needed, 2, 3)
-    top_phrases = frequency_table(frequent, n_docs, surfaces, config.top)
-    if distinctive is not None:
-        distinctive.insert(0, "phrase", distinctive["key"].map(lambda k: surfaces.get(k, k)))
-        distinctive["contains_selection_term"] = distinctive["phrase"].map(contains_selection_term)
-        distinctive = distinctive.drop(columns="key")
+    if n_background and frequent:
+        distinctive = log_odds(
+            frequent, index.n_docs, index.counts_in(bg_texts), n_background, config.prior
+        ).head(config.top)
+
+    years = papers["year"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
+    periods = (
+        (config.earlier, config.recent)
+        if config.recent and config.earlier
+        else default_periods(years)
+    )
+    rising = falling = None
+    if periods and frequent:
+        (e0, e1), (r0, r1) = periods
+        recent_rows = (years >= r0) & (years <= r1)
+        earlier_rows = (years >= e0) & (years <= e1)
+        if recent_rows.any() and earlier_rows.any():
+            trend = compare_rows(index, recent_rows, earlier_rows, set(frequent), config.prior)
+            trend = trend.rename(columns=_renamed("recent", "earlier"))
+            rising = trend[trend["z"] > 0].head(config.top)
+            falling = trend[trend["z"] < 0].sort_values("z").head(config.top)
+        else:
+            periods = None
+
+    between_sets = None
+    if len(sets) >= 2 and frequent:
+        only_a = papers["corpora"].map(lambda c: c == [sets[0]]).to_numpy()
+        only_b = papers["corpora"].map(lambda c: c == [sets[1]]).to_numpy()
+        if only_a.any() and only_b.any():
+            table = compare_rows(index, only_a, only_b, set(frequent), config.prior)
+            table = table.rename(columns=_renamed(sets[0], sets[1]))
+            between_sets = pd.concat([table.head(config.top), table.tail(config.top)])
+            between_sets = between_sets[~between_sets.index.duplicated()]
+
+    shown = set(top_keys)
+    for table in (distinctive, rising, falling, between_sets):
+        if table is not None:
+            shown |= set(table["key"])
+    surfaces = surface_forms(texts, shown, normalizer, 2, 3)
+    top_phrases = frequency_table(frequent, index.n_docs, surfaces, config.top)
+    distinctive, rising, falling, between_sets = (
+        _with_phrases(t, surfaces) for t in (distinctive, rising, falling, between_sets)
+    )
     log.info("counted %d phrases used in at least %d papers", len(frequent), config.min_df)
 
-    # Clusters -------------------------------------------------------------------------------
+    # Clusters ---------------------------------------------------------------------------------
+    vectors = None
+    if config.embeddings:
+        vectors = load_vectors(
+            papers["id"].tolist(),
+            [
+                embedding_text(t, a)
+                for t, a in zip(papers["title"], papers["abstract"], strict=True)
+            ],
+            layout.embeddings(model_slug(config.embeddings)),
+        )
     clusters = cluster_papers(
         texts,
         papers["title"].fillna("").tolist(),
         papers["id"].tolist(),
+        normalizer=normalizer,
+        vectors=vectors,
         k=config.k,
         k_candidates=config.k_candidates,
         min_df=config.cluster_min_df,
@@ -180,25 +337,57 @@ def run_analysis(
     )
     papers["cluster"] = clusters.labels
 
-    # Themes and trends ----------------------------------------------------------------------
-    theme_table = themes.overview(papers)
-    themes_by_year = themes.share_by(papers, "year")
-    themes_by_cluster = themes.share_by(papers, "cluster")
+    # Themes and concepts ----------------------------------------------------------------------
+    papers = papers.join(concepts.tag_concepts(search_text(papers)))
+    groups = ["year", "cluster"] + (["corpus_group"] if len(sets) > 1 else [])
+    theme_names = list(THEMES)
+    theme_tables = {"overall": tags.overview(papers, "themes", theme_names)}
+    for by in groups:
+        theme_tables[by] = tags.shares_by(papers, "themes", theme_names, by)
+    concept_tables: dict[str, list[pd.DataFrame]] = {"overall": [], **{by: [] for by in groups}}
+    for dimension, names in concepts.CONCEPTS.items():
+        col = concepts.column(dimension)
+        concept_tables["overall"].append(
+            tags.overview(papers, col, list(names)).assign(dimension=dimension)
+        )
+        for by in groups:
+            table = tags.shares_by(papers, col, list(names), by)
+            concept_tables[by].append(table.assign(dimension=dimension))
+    concept_tables = {k: pd.concat(v, ignore_index=True) for k, v in concept_tables.items()}
+
+    # Publication data -------------------------------------------------------------------------
+    comments = papers["comments"] if "comments" in papers else pd.Series(None, index=papers.index)
+    papers["publication_status"] = [
+        publication_status(j, c) for j, c in zip(papers["journal_ref"], comments, strict=True)
+    ]
+    with_openalex = bool(enriched)
+    if with_openalex:
+        oa = pd.concat(enriched, ignore_index=True).drop_duplicates("id")
+        oa = oa[["id", *[c for c in OPENALEX_COLUMNS if c in oa]]]
+        papers = papers.merge(oa, on="id", how="left")
+        for col in ("institution_types", "countries"):
+            papers[col] = papers[col].map(lambda v: v if isinstance(v, list) else [])
+    publication = publication_by_year(papers, with_openalex)
+    countries = countries_table(papers) if with_openalex else None
     year_table = papers_by_year(papers, summaries)
 
     run_info = {
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "informatics_version": __version__,
+        "normalization_version": NORMALIZATION_VERSION,
         "git_commit": _git_commit(),
         "sets": sets,
         "inputs": inputs,
         "config": asdict(config),
+        "periods": {"earlier": periods[0], "recent": periods[1]} if periods else None,
         "counts": {
             "papers": len(papers),
+            "near_duplicates_dropped": n_duplicates,
             "cross_listed": int((papers["corpora"].map(len) > 1).sum()),
             "background": n_background,
             "phrases_kept": len(frequent),
             "k": clusters.k,
+            "openalex_matched": int(papers["openalex_id"].notna().sum()) if with_openalex else None,
         },
         "versions": {
             "python": platform.python_version(),
@@ -209,22 +398,38 @@ def run_analysis(
         },
     }
 
+    # Files ------------------------------------------------------------------------------------
     out_dir.mkdir(parents=True, exist_ok=True)
     for name in OUTPUT_FILES:  # never leave files from an earlier run that this run did not make
         (out_dir / name).unlink(missing_ok=True)
     columns = [c for c in PAPER_COLUMNS if c in papers.columns]
     write_parquet(papers[columns], out_dir / "papers.parquet")
     write_csv(papers[columns], out_dir / "papers.csv")
-    write_csv(top_phrases, out_dir / "top_phrases.csv")
-    if distinctive is not None:
-        write_csv(distinctive, out_dir / "distinctive_phrases.csv")
-    write_csv(clusters.summary, out_dir / "clusters.csv")
-    if not clusters.k_selection.empty:
-        write_csv(clusters.k_selection, out_dir / "k_selection.csv")
-    write_csv(theme_table, out_dir / "themes.csv")
-    write_csv(themes_by_year, out_dir / "themes_by_year.csv")
-    write_csv(themes_by_cluster, out_dir / "themes_by_cluster.csv")
-    write_csv(year_table, out_dir / "papers_by_year.csv")
+    optional = {
+        "distinctive_phrases.csv": distinctive,
+        "rising_phrases.csv": rising,
+        "falling_phrases.csv": falling,
+        "phrases_between_sets.csv": between_sets,
+        "countries.csv": countries,
+        "k_selection.csv": None if clusters.k_selection.empty else clusters.k_selection,
+        "themes_by_set.csv": theme_tables.get("corpus_group"),
+        "concepts_by_set.csv": concept_tables.get("corpus_group"),
+    }
+    always = {
+        "top_phrases.csv": top_phrases,
+        "clusters.csv": clusters.summary,
+        "themes.csv": theme_tables["overall"],
+        "themes_by_year.csv": theme_tables["year"],
+        "themes_by_cluster.csv": theme_tables["cluster"],
+        "concepts.csv": concept_tables["overall"],
+        "concepts_by_year.csv": concept_tables["year"],
+        "concepts_by_cluster.csv": concept_tables["cluster"],
+        "papers_by_year.csv": year_table,
+        "publication_by_year.csv": publication,
+    }
+    for name, table in {**always, **optional}.items():
+        if table is not None:
+            write_csv(table, out_dir / name)
     write_json(run_info, out_dir / "run_info.json")
     report = render_report(
         {
@@ -236,10 +441,15 @@ def run_analysis(
             "year_table": year_table,
             "top_phrases": top_phrases,
             "distinctive_phrases": distinctive,
+            "rising_phrases": rising,
+            "falling_phrases": falling,
+            "phrases_between_sets": between_sets,
+            "periods": periods,
             "clusters": clusters,
-            "themes": theme_table,
-            "themes_by_year": themes_by_year,
-            "themes_by_cluster": themes_by_cluster,
+            "theme_tables": theme_tables,
+            "concept_tables": concept_tables,
+            "publication": publication,
+            "countries": countries,
         }
     )
     write_text(report, out_dir / "report.md")

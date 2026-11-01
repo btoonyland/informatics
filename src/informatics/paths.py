@@ -33,6 +33,16 @@ class Layout:
     def filter_summary(self, set_name: str) -> Path:
         return self.data_dir / "interim" / f"{slug(set_name)}_filter_summary.json"
 
+    def openalex(self, set_name: str) -> Path:
+        return self.data_dir / "interim" / f"{slug(set_name)}_openalex.parquet"
+
+    # caches shared by all sets
+    def text_cache(self) -> Path:
+        return self.data_dir / "interim" / "text_cache.parquet"
+
+    def embeddings(self, model_slug: str) -> Path:
+        return self.data_dir / "interim" / "embeddings" / f"{model_slug}.parquet"
+
     # results: one folder per analysed set (or combination of sets)
     def results(self, set_names: list[str]) -> Path:
         return self.results_dir / "+".join(slug(s) for s in set_names)

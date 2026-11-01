@@ -117,7 +117,20 @@ def normalize_records(df: pd.DataFrame, source: str | None = None) -> pd.DataFra
     df["categories"] = df["categories"].map(lambda v: as_str_list(v, split=True))
     if source is not None:
         df["source"] = source
-    year_month = df["id"].map(submission_year_month)
+    # The arXiv ID gives the month of first submission; other sources (PubMed) use their date.
+    year_month = [
+        submission_year_month(i) or date_year_month(c)
+        for i, c in zip(df["id"], df["created"], strict=True)
+    ]
     df["year"] = pd.array([ym[0] if ym else None for ym in year_month], dtype="Int16")
     df["month"] = pd.array([ym[1] if ym else None for ym in year_month], dtype="Int8")
     return df[RAW_COLUMNS].reset_index(drop=True)
+
+
+def date_year_month(value: Any) -> tuple[int, int | None] | None:
+    """(year, month) from "YYYY", "YYYY-MM" or "YYYY-MM-DD"; None if not a date."""
+    match = re.match(r"^(\d{4})(?:-(\d{2}))?", value) if isinstance(value, str) else None
+    if not match:
+        return None
+    month = int(match.group(2)) if match.group(2) else None
+    return int(match.group(1)), month if month and 1 <= month <= 12 else None

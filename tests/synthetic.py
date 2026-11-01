@@ -57,6 +57,11 @@ NEITHER = [
     "A consensus protocol tolerates Byzantine faults in distributed ledgers.",
 ]
 BOILERPLATE = "Results are reported for setting {n}."
+NON_ENGLISH = (
+    "Nous utilisons le deep learning pour la segmentation des tumeurs chez les patients "
+    "hospitalisés. Les résultats montrent une amélioration nette de la précision diagnostique "
+    "sur trois cohortes indépendantes de plusieurs hôpitaux."
+)
 
 
 def _arxiv_id(rng: np.random.Generator, serial: int) -> str:
@@ -67,21 +72,29 @@ def _arxiv_id(rng: np.random.Generator, serial: int) -> str:
 
 
 def make_corpus(n_per_topic: int = 40, seed: int = 0) -> pd.DataFrame:
-    """Raw-schema DataFrame plus ``kind`` and ``topic`` columns holding the ground truth."""
+    """Raw-schema DataFrame plus ``kind`` and ``topic`` columns holding the ground truth.
+
+    Besides the four kinds, there are 3 withdrawn papers and 2 French abstracts (both must be
+    excluded) and 3 re-posts of AI-medicine papers under new IDs (kind "duplicate"). Some
+    AI-medicine papers have a journal reference or an "accepted" comment.
+    """
     rng = np.random.default_rng(seed)
     rows = []
 
-    def add(kind: str, topic: str, title: str, abstract: str) -> None:
+    def add(kind: str, topic: str, title: str, abstract: str, **extra: str) -> None:
         serial = len(rows) + 1
         rows.append(
             {
                 "id": _arxiv_id(rng, serial),
-                "title": f"{title} ({serial})",
-                "abstract": f"{abstract} {BOILERPLATE.format(n=serial)}",
+                "title": extra.pop("exact_title", f"{title} ({serial})"),
+                "abstract": extra.pop(
+                    "exact_abstract", f"{abstract} {BOILERPLATE.format(n=serial)}"
+                ),
                 "authors": ["Ana Kovač", "Jörg Müller"],
                 "categories": ["cs.LG", "q-bio.QM"] if kind == "ai_medicine" else ["cs.LG"],
                 "kind": kind,
                 "topic": topic,
+                **extra,
             }
         )
 
@@ -94,7 +107,12 @@ def make_corpus(n_per_topic: int = 40, seed: int = 0) -> pd.DataFrame:
             )
             if rng.random() < 0.6:
                 abstract += " " + THEME_SENTENCES[topic]
-            add("ai_medicine", topic, f"{w[0].capitalize()} and {w[1]}", abstract)
+            extra = {}
+            if len(rows) % 5 == 0:
+                extra["journal_ref"] = "J. Synthetic Med. 1 (2020) 1-10"
+            elif len(rows) % 7 == 0:
+                extra["comments"] = "12 pages; accepted at a test conference"
+            add("ai_medicine", topic, f"{w[0].capitalize()} and {w[1]}", abstract, **extra)
     for _ in range(n_per_topic * 3):
         w = rng.choice(AI_ONLY_WORDS, size=3, replace=False)
         add("ai_only", "ai", f"{w[0].capitalize()} with {rng.choice(AI_TERMS)}",
@@ -104,6 +122,16 @@ def make_corpus(n_per_topic: int = 40, seed: int = 0) -> pd.DataFrame:
         add("medicine_only", "medicine", text.split(" in ")[0], text)
         text = str(rng.choice(NEITHER))
         add("neither", "other", text.split(" for ")[0], text)
+
+    for original in rows[:3]:  # re-posted under a new ID with a short addition
+        add("duplicate", original["topic"], "", "", exact_title=original["title"],
+            exact_abstract=original["abstract"] + " This version corrects a typo.")  # fmt: skip
+    for _ in range(3):
+        add("withdrawn", "imaging", "Tumor segmentation with deep learning for patients",
+            "We study tumor segmentation with deep learning for patients.",
+            comments="This paper has been withdrawn by the authors.")  # fmt: skip
+    for _ in range(2):
+        add("non_english", "imaging", "Segmentation des tumeurs", NON_ENGLISH)
 
     df = pd.DataFrame(rows)
     truth = df[["id", "kind", "topic"]]

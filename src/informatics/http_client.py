@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import email.utils
+import json
 import logging
 import time
 import xml.etree.ElementTree as ET
@@ -82,6 +83,13 @@ class HttpClient:
             )
             self.sleep(wait)
         raise AssertionError("unreachable")
+
+    def get_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
+        content = self.get(url, params)
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise HttpError(f"invalid JSON from {url}: {exc}; starts {content[:200]!r}") from exc
 
     def get_xml(
         self, url: str, params: dict[str, Any] | None = None, parse_retries: int = 3

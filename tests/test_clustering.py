@@ -3,7 +3,8 @@ import pytest
 from sklearn.metrics import adjusted_rand_score
 
 from informatics.analysis import paper_texts
-from informatics.clustering import TermAnalyzer, cluster_papers, selection_keys
+from informatics.clustering import TermAnalyzer, cluster_papers
+from informatics.normalize import Normalizer
 
 
 @pytest.fixture(scope="module")
@@ -43,9 +44,12 @@ def test_labels_exclude_selection_keywords(ai_medicine):
 
 
 def test_analyzer_keeps_phrases_containing_selection_words():
-    terms = TermAnalyzer(selection_keys())("Mental health of patients; deep learning for health.")
+    text = "Mental health of patients; deep learning for health; deep-learning models."
+    normalizer = Normalizer.from_texts([text])
+    terms = TermAnalyzer(normalizer)(text)
     assert "mental health" in terms  # a phrase that merely contains "health" stays
-    assert "health" not in terms and "patient" not in terms and "deep learning" not in terms
+    for keyword in ("health", "patients", "deep learning", "deep-learning"):
+        assert normalizer.key_of(keyword) not in terms
 
 
 def test_too_little_data_raises():

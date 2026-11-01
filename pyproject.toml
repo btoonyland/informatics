@@ -14,9 +14,12 @@ dependencies = [
     "pyarrow>=14",
     "requests>=2.31",
     "scikit-learn>=1.3",
+    "simplemma>=1.0",
 ]
 
 [project.optional-dependencies]
+# Sentence embeddings for clustering (informatics embed / analyze --embeddings)
+embeddings = ["sentence-transformers>=2.2"]
 # Only needed for misc/pdf_extract.py
 pdf = ["pypdf>=4.0", "pdfminer.six>=20231228"]
 dev = ["pytest>=8", "ruff>=0.5"]

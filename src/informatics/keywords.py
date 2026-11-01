@@ -129,6 +129,14 @@ class ThemeMatcher:
             for name, t in self.themes.items()
         ]
 
+    def words(self, theme: str, text: str) -> list[str]:
+        """Distinct words that tagged ``text`` with ``theme`` (after its exclusions)."""
+        for name, include, exclude in self._compiled:
+            if name == theme:
+                searchable = exclude.sub(" ", text) if exclude is not None else text
+                return sorted({m.group(0).lower() for m in include.finditer(searchable)})
+        raise KeyError(theme)
+
     def find(self, text: str) -> tuple[list[str], list[str]]:
         """(themes present, distinct matched words) for one text."""
         found, words = [], set()

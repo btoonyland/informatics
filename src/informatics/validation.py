@@ -7,7 +7,12 @@
 2. Fill in ``relevant`` with 1 (the paper is about AI in medicine) or 0.
 3. ``informatics label-evaluate --set cs`` estimates precision (share of selected papers that are
    relevant) and recall (share of all relevant papers that were selected). Each stratum's
-   labelled share is scaled up to that stratum's size in the whole set.
+   labelled share is scaled up to that stratum's size in the whole set. Excluded papers
+   (withdrawn, not English) are left out on purpose and do not count as misses.
+
+The themes are checked the same way: ``label-themes-sample`` draws papers tagged with each theme,
+you mark whether the paper really discusses it, and ``label-themes-evaluate`` reports each
+theme's precision. Ambiguous words (bias, regulation, compliance) are the reason to do this.
 """
 
 from __future__ import annotations
@@ -19,8 +24,15 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-from informatics.filtering import STRATA, FilterConfig, annotate
+from informatics import keywords
+from informatics.filtering import MISSED_STRATA, STRATA, FilterConfig, annotate, search_text
+from informatics.stats import wilson_interval
 from informatics.storage import read_parquet
+
+__all__ = [
+    "evaluate_labels", "evaluate_theme_labels", "make_label_sample", "make_theme_sample",
+    "parse_label", "wilson_interval",
+]  # fmt: skip
 
 TRUE = {"1", "y", "yes", "true", "t"}
 FALSE = {"0", "n", "no", "false", "f"}
@@ -40,15 +52,16 @@ def make_label_sample(
     config = FilterConfig(
         min_ai_hits=cfg["min_ai_hits"], min_medicine_hits=cfg["min_medicine_hits"]
     )
-    selected = read_parquet(selected_path, columns=["id", "title", "abstract"])
+    selected = read_parquet(selected_path, columns=["id", "title", "abstract", "duplicate_of"])
+    selected_ids = set(selected["id"])
+    selected = selected[selected["duplicate_of"].isna()]
     picked = [selected.sample(n=min(n_selected, len(selected)), random_state=seed)]
     picked[0] = picked[0].assign(stratum="selected")
 
-    quotas = {s: n_per_stratum for s in STRATA if s != "selected"}
+    quotas = {s: n_per_stratum for s in MISSED_STRATA}
     if config.min_ai_hits == 1 and config.min_medicine_hits == 1:
         quotas.pop("below_threshold")  # cannot occur with the default rule
-    selected_ids = set(selected["id"])
-    table = pq.read_table(raw_path, columns=["id", "title", "abstract"])
+    table = pq.read_table(raw_path, columns=["id", "title", "abstract", "comments"])
     order = np.random.default_rng(seed).permutation(table.num_rows)
     for start in range(0, len(order), batch_size):
         if not any(quotas.values()):
@@ -81,17 +94,6 @@ def parse_label(value: object) -> bool | None:
     raise ValueError(f"unrecognised label {value!r}: use 1/0, yes/no or true/false")
 
 
-def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
-    """95% Wilson score interval for a proportion."""
-    if n == 0:
-        return math.nan, math.nan
-    p = successes / n
-    denom = 1 + z**2 / n
-    centre = (p + z**2 / (2 * n)) / denom
-    half = z * math.sqrt(p * (1 - p) / n + z**2 / (4 * n**2)) / denom
-    return max(0.0, centre - half), min(1.0, centre + half)
-
-
 def evaluate_labels(
     sheet: pd.DataFrame, key: pd.DataFrame, summary: dict
 ) -> tuple[pd.DataFrame, dict]:
@@ -122,7 +124,7 @@ def evaluate_labels(
     table = pd.DataFrame(rows)
     by_stratum = table.set_index("stratum")
     hits = by_stratum.loc["selected", "estimated_relevant_in_set"]
-    others = table[table["stratum"] != "selected"]
+    others = table[table["stratum"].isin(MISSED_STRATA)]
     misses = others["estimated_relevant_in_set"].sum(skipna=True)
     unlabelled = others[(others["labelled"] == 0) & (others["papers_in_set"] > 0)]["stratum"]
     total = hits + misses
@@ -140,3 +142,47 @@ def evaluate_labels(
         "unlabelled_rows": int(df["relevant"].isna().sum()),
     }
     return table, result
+
+
+def make_theme_sample(
+    selected_path: str | Path, per_theme: int = 30, seed: int = 42
+) -> pd.DataFrame:
+    """Up to ``per_theme`` papers tagged with each theme, with the words that matched."""
+    df = read_parquet(selected_path, columns=["id", "title", "abstract", "themes", "duplicate_of"])
+    df = df[df["duplicate_of"].isna()].reset_index(drop=True)
+    text = search_text(df)
+    parts = []
+    for theme in keywords.THEMES:
+        tagged = df[df["themes"].map(lambda found, t=theme: t in found)]
+        sample = tagged.sample(n=min(per_theme, len(tagged)), random_state=seed)
+        matched = text.loc[sample.index].map(
+            lambda t, name=theme: ", ".join(keywords.THEME_MATCHER.words(name, t))
+        )
+        parts.append(sample.assign(theme=theme, matched=matched))
+    if not parts or not sum(len(p) for p in parts):
+        return pd.DataFrame(
+            columns=["theme", "id", "matched", "title", "abstract", "relevant", "notes"]
+        )
+    sheet = pd.concat(parts, ignore_index=True)
+    return sheet[["theme", "id", "matched", "title", "abstract"]].assign(relevant="", notes="")
+
+
+def evaluate_theme_labels(sheet: pd.DataFrame) -> pd.DataFrame:
+    """Precision of each theme's keywords: share of tagged papers that really discuss the theme."""
+    df = sheet.assign(relevant=sheet["relevant"].map(parse_label))
+    rows = []
+    for theme in keywords.THEMES:
+        part = df[(df["theme"] == theme) & df["relevant"].notna()]
+        n, relevant = len(part), int(part["relevant"].astype(bool).sum())
+        low, high = wilson_interval(relevant, n)
+        rows.append(
+            {
+                "theme": theme,
+                "labelled": n,
+                "relevant": relevant,
+                "precision": relevant / n if n else math.nan,
+                "ci_low": low,
+                "ci_high": high,
+            }
+        )
+    return pd.DataFrame(rows)

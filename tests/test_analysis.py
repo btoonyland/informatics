@@ -1,11 +1,19 @@
 import json
 
+import numpy as np
 import pandas as pd
 import pytest
+from synthetic import make_corpus
 
-from informatics.analysis import AnalysisConfig, combine, papers_by_year, run_analysis
+from informatics.analysis import (
+    AnalysisConfig,
+    combine,
+    default_periods,
+    papers_by_year,
+    run_analysis,
+)
 from informatics.filtering import FilterConfig, run_filter
-from informatics.records import RAW_SCHEMA
+from informatics.records import RAW_SCHEMA, normalize_records
 from informatics.storage import read_json, read_parquet, write_parquet
 
 CONFIG = AnalysisConfig(min_df=3, cluster_min_df=3, k_candidates=(2, 3, 4, 5, 6))
@@ -28,13 +36,20 @@ def test_end_to_end_outputs(layout, corpus):
     assert out == layout.results(["cs"])
     expected = {
         "papers.parquet", "papers.csv", "top_phrases.csv", "distinctive_phrases.csv",
-        "clusters.csv", "k_selection.csv", "themes.csv", "themes_by_year.csv",
-        "themes_by_cluster.csv", "papers_by_year.csv", "run_info.json", "report.md",
+        "rising_phrases.csv", "falling_phrases.csv", "clusters.csv", "k_selection.csv",
+        "themes.csv", "themes_by_year.csv", "themes_by_cluster.csv", "concepts.csv",
+        "concepts_by_year.csv", "concepts_by_cluster.csv", "papers_by_year.csv",
+        "publication_by_year.csv", "run_info.json", "report.md",
     }  # fmt: skip
     assert {p.name for p in out.iterdir()} == expected
 
     papers = read_parquet(out / "papers.parquet")
+    # The 3 re-posted papers are dropped; withdrawn and French papers never got selected.
     assert len(papers) == (corpus["kind"] == "ai_medicine").sum()
+    assert (
+        papers["id"].isin(corpus.loc[corpus["kind"].isin(["withdrawn", "non_english"]), "id"]).sum()
+        == 0
+    )
     assert "clean_summary" not in papers  # no lossy copy of every abstract
 
     csv = pd.read_csv(out / "papers.csv", dtype=str)
@@ -49,11 +64,66 @@ def test_end_to_end_outputs(layout, corpus):
     assert "results are reported" in top["phrase"].tolist()
     assert "results are reported" not in distinctive["phrase"].head(20).tolist()
 
+    rising = pd.read_csv(out / "rising_phrases.csv")
+    falling = pd.read_csv(out / "falling_phrases.csv")
+    assert {"phrase", "recent_share", "earlier_share", "z"} <= set(rising.columns)
+    assert (rising["z"] > 0).all() and (falling["z"] < 0).all()
+
+    themes_by_year = pd.read_csv(out / "themes_by_year.csv")
+    columns = ["year", "papers_in_group", "tag", "papers", "share", "ci_low", "ci_high"]
+    assert list(themes_by_year.columns) == columns
+    assert (themes_by_year["ci_low"] <= themes_by_year["share"]).all()
+    assert (themes_by_year["share"] <= themes_by_year["ci_high"]).all()
+
+    concepts = pd.read_csv(out / "concepts.csv").set_index(["dimension", "tag"])
+    assert concepts.loc[("data type", "medical images"), "papers"] >= 30  # the imaging topic
+    # 3 of the language topic's 12 words are clinical text, so ~75% of its 40 papers qualify.
+    assert concepts.loc[("data type", "clinical text"), "papers"] >= 20
+    assert concepts.loc[("clinical task", "segmentation"), "papers"] > 0
+
+    publication = pd.read_csv(out / "publication_by_year.csv")
+    with_ref = (publication["share_journal_ref"] * publication["papers"]).round().sum()
+    assert with_ref == papers["journal_ref"].notna().sum() > 0
+    assert set(papers["publication_status"]) == {
+        "journal reference", "accepted (comments)", "no evidence",
+    }  # fmt: skip
+
     info = read_json(out / "run_info.json")
     assert info["counts"]["papers"] == len(papers) and info["counts"]["k"] == 4
+    assert info["counts"]["near_duplicates_dropped"] == 3
+    assert info["periods"]["recent"][1] == papers["year"].max()
     assert {"pandas", "scikit-learn"} <= set(info["versions"])
     report = (out / "report.md").read_text(encoding="utf-8")
-    assert f"**{len(papers):,} papers**" in report and "## Topic clusters (k = 4)" in report
+    assert f"**{len(papers):,} papers**" in report and "## Topic clusters (k = 4" in report
+    for section in (
+        "## Concepts",
+        "## Publication",
+        "### Rising phrases",
+        "3 withdrawn, 2 not in English",
+    ):
+        assert section in report
+
+
+def test_text_cache_is_reused(layout):
+    _filter(layout)
+    run_analysis(["cs"], layout, config=CONFIG)
+    cache = read_parquet(layout.text_cache())
+    assert len(cache) > 0 and set(cache["version"]) == {"1"}
+    modified = layout.text_cache().stat().st_mtime
+    run_analysis(["cs"], layout, config=CONFIG)
+    assert layout.text_cache().stat().st_mtime == modified  # nothing new to prepare
+
+
+def test_explicit_periods(layout):
+    _filter(layout)
+    config = AnalysisConfig(
+        min_df=3, cluster_min_df=3, k=4, recent=(2020, 2024), earlier=(2010, 2014)
+    )
+    out = run_analysis(["cs"], layout, config=config)
+    assert read_json(out / "run_info.json")["periods"] == {
+        "earlier": [2010, 2014],
+        "recent": [2020, 2024],
+    }
 
 
 def test_rerun_without_background_removes_stale_files(layout):
@@ -66,19 +136,36 @@ def test_rerun_without_background_removes_stale_files(layout):
     assert not (out / "k_selection.csv").exists()
 
 
-def test_cross_listed_papers_are_counted_once(layout, corpus):
-    # Build a second set that shares half of its papers with the first.
+def _extra_papers(n_per_topic: int, seed: int) -> pd.DataFrame:
+    """Synthetic papers whose IDs cannot collide with the main corpus."""
+    extra = make_corpus(n_per_topic, seed=seed).drop(columns=["kind", "topic"])
+    extra["id"] = [f"{i.split('.')[0]}.{9000 + n:04d}" for n, i in enumerate(extra["id"])]
+    return normalize_records(extra, source="synthetic")
+
+
+def test_two_sets_counted_once_and_compared(layout, corpus):
+    # q-bio shares half of cs's papers and has some of its own.
     shared = corpus.iloc[::2].drop(columns=["kind", "topic"])
-    write_parquet(shared, layout.raw("q-bio"), schema=RAW_SCHEMA)
+    write_parquet(
+        pd.concat([shared, _extra_papers(5, seed=9)]), layout.raw("q-bio"), schema=RAW_SCHEMA
+    )
     _filter(layout, "cs")
     _filter(layout, "q-bio")
     out = run_analysis(["cs", "q-bio"], layout, config=CONFIG)
     assert out.name == "cs+q-bio"
     papers = read_parquet(out / "papers.parquet")
     assert papers["id"].is_unique
-    assert len(papers) == (corpus["kind"] == "ai_medicine").sum()
-    both = papers["corpora"].map(len) == 2
-    assert both.sum() == (shared.merge(corpus[["id", "kind"]])["kind"] == "ai_medicine").sum()
+    in_both = papers["corpora"].map(len) == 2
+    assert in_both.tolist() == papers["id"].isin(shared["id"]).tolist()
+    for name in ("themes_by_set.csv", "concepts_by_set.csv", "phrases_between_sets.csv"):
+        assert (out / name).exists()
+    between = pd.read_csv(out / "phrases_between_sets.csv")
+    assert {"phrase", "cs_share", "q-bio_share", "z"} <= set(between.columns)
+    assert set(pd.read_csv(out / "themes_by_set.csv")["corpus_group"]) == {
+        "cs",
+        "cs+q-bio",
+        "q-bio",
+    }
 
 
 def test_combine_merges_corpora():
@@ -88,6 +175,11 @@ def test_combine_merges_corpora():
     ]
     combined = combine(frames).set_index("id")
     assert combined["corpora"].to_dict() == {"1": ["cs"], "2": ["cs", "q-bio"], "3": ["q-bio"]}
+
+
+def test_default_periods():
+    assert default_periods(np.array([2015.0, 2024.0, np.nan])) == ((2018, 2021), (2022, 2024))
+    assert default_periods(np.array([np.nan])) is None
 
 
 def test_papers_by_year_shares():

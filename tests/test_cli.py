@@ -57,3 +57,33 @@ def test_missing_input_returns_error_code(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     assert main(["filter", "--set", "cs"]) == 1
     assert "informatics harvest --set cs" in capsys.readouterr().err
+
+
+def test_analyze_period_and_embedding_options():
+    args = parse_args(["analyze", "--set", "cs", "--recent", "2023-2025", "--earlier", "2019-2022",
+                       "--embeddings", "some/model", "--no-cache"])  # fmt: skip
+    assert (args.recent, args.earlier) == ((2023, 2025), (2019, 2022))
+    assert args.embeddings == "some/model" and args.no_cache
+    with pytest.raises(SystemExit):
+        parse_args(["analyze", "--set", "cs", "--recent", "2025-2020"])
+
+
+def test_period_options_must_come_together(layout, monkeypatch, capsys):
+    monkeypatch.chdir(layout.data_dir.parent)
+    assert main(["filter", "--set", "cs"]) == 0
+    assert main(["analyze", "--set", "cs", "--recent", "2023-2024"]) == 1
+    assert "both --recent and --earlier" in capsys.readouterr().err
+
+
+def test_theme_labelling_through_the_cli(layout, monkeypatch, capsys):
+    monkeypatch.chdir(layout.data_dir.parent)
+    assert main(["filter", "--set", "cs"]) == 0
+    assert main(["label-themes-sample", "--set", "cs", "--per-theme", "4"]) == 0
+    path = Path("labels/cs_themes_to_label.csv")
+    sheet = pd.read_csv(path, dtype=str, keep_default_na=False)
+    sheet["relevant"] = "1"
+    sheet.to_csv(path, index=False)
+    assert main(["label-themes-sample", "--set", "cs"]) == 1  # labels are never overwritten
+    assert main(["label-themes-evaluate", "--set", "cs"]) == 0
+    assert Path("labels/cs_themes_evaluation.csv").exists()
+    assert "privacy" in capsys.readouterr().out

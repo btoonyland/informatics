@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from informatics import keywords
-from informatics.filtering import FilterConfig, annotate, run_filter
+from informatics.filtering import STRATA, FilterConfig, annotate, run_filter
 from informatics.storage import read_parquet
 
 
@@ -88,15 +88,17 @@ def test_run_filter_on_synthetic_corpus(layout, corpus):
     kinds = corpus.set_index("id")["kind"]
     selected = read_parquet(layout.selected("cs"))
     background = read_parquet(layout.background("cs"))
-    assert set(kinds[selected["id"]]) == {"ai_medicine"}
-    assert len(selected) == (kinds == "ai_medicine").sum()
+    # Re-posted papers are selected but flagged; withdrawn and French papers are excluded.
+    assert set(kinds[selected["id"]]) == {"ai_medicine", "duplicate"}
+    assert len(selected) == kinds.isin(["ai_medicine", "duplicate"]).sum()
+    assert selected["duplicate_of"].notna().sum() == (kinds == "duplicate").sum() == 3
     assert set(kinds[background["id"]]) == {"ai_only"} and len(background) == 50
 
     counts = summary["counts"]
     assert counts["scanned"] == len(corpus)
-    assert sum(
-        counts[s] for s in ("selected", "ai_only", "medicine_only", "neither", "below_threshold")
-    ) == len(corpus)
+    assert sum(counts[s] for s in STRATA) == len(corpus)
+    assert counts["excluded_withdrawn"] == 3 and counts["excluded_non_english"] == 2
+    assert counts["excluded"] == 5 and counts["near_duplicates"] == 3
     assert sum(y["scanned"] for y in summary["by_year"].values()) == len(corpus)
     assert summary["keywords"]["ai"]["llm"] == keywords.AI_TERMS["llm"]  # patterns recorded
 

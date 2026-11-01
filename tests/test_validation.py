@@ -72,3 +72,32 @@ def test_label_sample_is_blind_and_stratified(layout):
         layout.raw("cs"), layout.selected("cs"), summary, n_selected=20, n_per_stratum=5, seed=1
     )
     assert again["id"].tolist() == sheet["id"].tolist()
+
+
+def test_theme_sample_and_precision(layout):
+    from informatics.validation import evaluate_theme_labels, make_theme_sample
+
+    run_filter(layout.raw("cs"), "cs", layout.selected("cs"), layout.background("cs"),
+               layout.filter_summary("cs"), FilterConfig())  # fmt: skip
+    sheet = make_theme_sample(layout.selected("cs"), per_theme=5, seed=1)
+    assert list(sheet.columns) == [
+        "theme",
+        "id",
+        "matched",
+        "title",
+        "abstract",
+        "relevant",
+        "notes",
+    ]
+    assert sheet.groupby("theme").size().to_dict() == {
+        "bias": 5,
+        "ethical": 5,
+        "privacy": 5,
+        "regulation": 5,
+    }
+    assert set(sheet.loc[sheet["theme"] == "regulation", "matched"]) == {"regulatory"}
+    sheet["relevant"] = "1"
+    sheet.loc[sheet.index[sheet["theme"] == "bias"][:2], "relevant"] = "0"
+    table = evaluate_theme_labels(sheet).set_index("theme")
+    assert table.loc["bias", "precision"] == pytest.approx(0.6)
+    assert table.loc["privacy", "precision"] == 1.0 and table.loc["legal", "labelled"] == 0
