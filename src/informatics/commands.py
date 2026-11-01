@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -20,8 +21,15 @@ from informatics.filtering import FilterConfig, run_filter
 from informatics.harvest import consolidate, harvest, list_sets
 from informatics.imports import import_kaggle, import_legacy_csv
 from informatics.llm import RUBRIC, LlmClassifier, LlmConfig, decisions_from_answers, paper_message
+from informatics.openalex import import_openalex
 from informatics.paths import Layout, slug
-from informatics.pubmed import import_pubmed
+from informatics.pubmed import (
+    AI_MESH,
+    BASELINE_SOURCE,
+    SAMPLE_SOURCE,
+    import_pubmed,
+    import_pubmed_files,
+)
 from informatics.records import title_and_abstract
 from informatics.relevance import train_and_classify
 from informatics.selection import read_candidates, selected_papers
@@ -35,6 +43,13 @@ from informatics.validation import (
     make_theme_sample,
     read_labels,
 )
+
+
+def _record_import(layout: Layout, set_name: str, **info: object) -> None:
+    """Write data/raw/<set>_import.json: how the raw file was made (see sources.py)."""
+    info = {k: (str(v) if isinstance(v, Path) else v) for k, v in info.items() if v is not None}
+    info["created_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    write_json(info, layout.raw_info(set_name))
 
 
 def _require(path: Path, hint: str) -> Path:
@@ -89,6 +104,10 @@ def cmd_harvest(args: argparse.Namespace, layout: Layout) -> None:
     )
     if state["complete"]:
         consolidate(target, layout.raw(args.set_name))
+        _record_import(
+            layout, args.set_name, source="oai-pmh", set_spec=args.set_name,
+            base_url=args.base_url, date_from=args.date_from, date_until=args.date_until,
+        )  # fmt: skip
         print(f"Harvest complete: {layout.raw(args.set_name)}")
     else:
         print(f"Paused after {state['records']} records; run the same command to continue.")
@@ -106,18 +125,64 @@ def cmd_count(args: argparse.Namespace, layout: Layout) -> None:
 
 def cmd_import_kaggle(args: argparse.Namespace, layout: Layout) -> None:
     n = import_kaggle(args.snapshot, args.set_name, layout.raw(args.set_name))
+    _record_import(
+        layout, args.set_name, source="kaggle", set_spec=args.set_name, file=args.snapshot.name
+    )
     print(f"Imported {n:,} records into {layout.raw(args.set_name)}")
 
 
 def cmd_import_legacy(args: argparse.Namespace, layout: Layout) -> None:
     n = import_legacy_csv(args.csv, layout.raw(args.set_name))
+    _record_import(layout, args.set_name, source="legacy-csv", file=args.csv.name)
     print(f"Imported {n:,} records into {layout.raw(args.set_name)}")
 
 
 def cmd_import_pubmed(args: argparse.Namespace, layout: Layout) -> None:
     years = range(args.from_year, args.to_year + 1)
     n = import_pubmed(layout.raw(args.set_name), years, args.query, args.per_year, args.api_key)
+    _record_import(
+        layout, args.set_name, source=SAMPLE_SOURCE, query=args.query, per_year=args.per_year,
+        years=f"{args.from_year}-{args.to_year}",
+    )  # fmt: skip
     print(f"Imported {n:,} PubMed records into {layout.raw(args.set_name)}")
+
+
+def cmd_import_pubmed_files(args: argparse.Namespace, layout: Layout) -> None:
+    files = [f for pattern in args.files for f in sorted(Path().glob(pattern))] or [
+        Path(f) for f in args.files
+    ]
+    missing = [str(f) for f in files if not f.exists()]
+    if missing:
+        raise FileNotFoundError(f"PubMed files not found: {', '.join(missing[:5])}")
+    mesh = args.mesh or list(AI_MESH)
+    counts = import_pubmed_files(
+        files, layout.raw(args.set_name), mesh, args.keywords, everything=args.all
+    )
+    _record_import(
+        layout, args.set_name, source=BASELINE_SOURCE, files=counts["files"],
+        mesh=None if args.all else mesh, keywords=None if args.all else args.keywords,
+        everything=args.all, counts=counts,
+    )  # fmt: skip
+    print(
+        f"Kept {counts['kept']:,} of {counts.get('read', 0):,} PubMed records from "
+        f"{counts['files']} files -> {layout.raw(args.set_name)}"
+    )
+
+
+def cmd_import_openalex(args: argparse.Namespace, layout: Layout) -> None:
+    if not args.api_key:
+        print(
+            "Note: OpenAlex has required an API key since February 2026 (free at "
+            "openalex.org/settings/api); trying without one.",
+            file=sys.stderr,
+        )
+    n = import_openalex(
+        layout.raw(args.set_name), args.filter, args.from_year, args.to_year, args.api_key,
+        args.mailto, max_records=args.max_records,
+    )  # fmt: skip
+    years = f"{args.from_year or ''}-{args.to_year or ''}".strip("-") or None
+    _record_import(layout, args.set_name, source="openalex", filter=args.filter, years=years)
+    print(f"Imported {n:,} OpenAlex works into {layout.raw(args.set_name)}")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -439,6 +504,8 @@ COMMANDS = {
     "import-kaggle": cmd_import_kaggle,
     "import-legacy-csv": cmd_import_legacy,
     "import-pubmed": cmd_import_pubmed,
+    "import-pubmed-files": cmd_import_pubmed_files,
+    "import-openalex": cmd_import_openalex,
     "filter": cmd_filter,
     "classify": cmd_classify,
     "label-sample": cmd_label_sample,

@@ -28,6 +28,7 @@ from informatics.embeddings import DEFAULT_MODEL
 from informatics.harvest import DEFAULT_BASE_URL, HarvestError
 from informatics.http_client import HttpError
 from informatics.llm import DEFAULT_MODEL as LLM_MODEL
+from informatics.openalex import DEFAULT_FILTER as OPENALEX_FILTER
 from informatics.paths import Layout
 from informatics.pubmed import DEFAULT_QUERY as PUBMED_QUERY
 from informatics.selection import SELECTIONS
@@ -127,6 +128,39 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--to-year", type=int, default=date.today().year)
     p.add_argument("--per-year", type=int, default=2000, help="records per year (max 9999)")
     p.add_argument("--api-key", default=os.environ.get("NCBI_API_KEY"), help="or set NCBI_API_KEY")
+
+    p = sub.add_parser(
+        "import-pubmed-files", help="build a set from PubMed baseline/update files (all records)"
+    )
+    p.add_argument("files", nargs="+", help="pubmed*.xml.gz files or glob patterns")
+    add_set(p, "name for the set, e.g. pubmed")
+    p.add_argument(
+        "--mesh",
+        action="append",
+        metavar="DESCRIPTOR",
+        help="keep records with this MeSH heading (repeatable; default: the AI headings)",
+    )
+    p.add_argument(
+        "--keywords",
+        choices=["none", "strict", "wide"],
+        default="strict",
+        help="also keep records with AI keywords in title/abstract (default: strict list)",
+    )
+    p.add_argument("--all", action="store_true", help="keep every record (very large)")
+
+    p = sub.add_parser("import-openalex", help="build a set from OpenAlex works (needs a key)")
+    add_set(p, "name for the set, e.g. openalex")
+    p.add_argument(
+        "--filter",
+        default=OPENALEX_FILTER,
+        help=f"OpenAlex works filter (default: {OPENALEX_FILTER}, AI topics in medicine)",
+    )
+    p.add_argument("--from-year", type=int)
+    p.add_argument("--to-year", type=int)
+    p.add_argument("--max-records", type=int, help="stop after this many works")
+    p.add_argument("--api-key", default=os.environ.get("OPENALEX_API_KEY"),
+                   help="OpenAlex API key (or set OPENALEX_API_KEY)")  # fmt: skip
+    p.add_argument("--mailto", help="contact e-mail sent to OpenAlex (optional)")
 
     p = sub.add_parser("filter", help="find candidate papers with the wide keyword net")
     add_set(p)

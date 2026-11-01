@@ -40,7 +40,7 @@ from informatics import keywords
 from informatics.cleaning import is_non_english, is_withdrawn, near_duplicates
 from informatics.normalize import clean_characters
 from informatics.records import RAW_SCHEMA
-from informatics.storage import iter_parquet, write_json, write_parquet
+from informatics.storage import iter_parquet, read_json, write_json, write_parquet
 
 log = logging.getLogger(__name__)
 
@@ -172,6 +172,7 @@ def run_filter(
     rng = np.random.default_rng(config.seed)
     strata: Counter[str] = Counter()
     exclusions: Counter[str] = Counter()
+    sources: Counter[str] = Counter()
     by_year: dict[int, Counter[str]] = defaultdict(Counter)
     candidate_parts: list[pd.DataFrame] = []
     reservoir: pd.DataFrame | None = None
@@ -179,6 +180,7 @@ def run_filter(
     for chunk in iter_parquet(raw_path, batch_size=config.batch_size):
         chunk = pd.concat([chunk, annotate(chunk, config)], axis=1)
         strata.update(chunk["stratum"].value_counts().to_dict())
+        sources.update(chunk["source"].fillna("unknown").value_counts().to_dict())
         exclusions.update(chunk["exclusion"].dropna().value_counts().to_dict())
         kept = chunk["exclusion"].isna()
         is_candidate = chunk["stratum"].isin(CANDIDATE_STRATA)
@@ -211,9 +213,13 @@ def run_filter(
 
     unique = candidates[candidates["duplicate_of"].isna()]
     theme_counts = unique.loc[unique["keyword_rule"], "themes"].explode().dropna().value_counts()
+    import_path = Path(raw_path).with_name(f"{Path(raw_path).stem}_import.json")
     summary = {
         "set": set_name,
         "raw": str(raw_path),
+        # How the raw file was made (see sources.py), and which sources its papers came from.
+        "import": read_json(import_path) if import_path.exists() else None,
+        "sources": {str(k): int(v) for k, v in sources.items()},
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "config": asdict(config),
         "counts": {

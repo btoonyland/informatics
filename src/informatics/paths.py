@@ -20,6 +20,10 @@ class Layout:
     def raw(self, set_name: str) -> Path:
         return self.data_dir / "raw" / f"{slug(set_name)}.parquet"
 
+    def raw_info(self, set_name: str) -> Path:
+        """How the raw file was made (source, query or filter, dates): the population."""
+        return self.data_dir / "raw" / f"{slug(set_name)}_import.json"
+
     def harvest_dir(self, set_name: str) -> Path:
         return self.data_dir / "raw" / f"{slug(set_name)}_harvest"
 

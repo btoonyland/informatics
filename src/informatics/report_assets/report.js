@@ -532,6 +532,7 @@
       return h("li", { text: sel.set + ": " + count(sel.selected) + " of " + count(sel.candidates) +
         " candidates selected by " + sel.description + "." });
     }));
+    (DATA.population || []).forEach(function (line) { notes.appendChild(h("li", { text: line })); });
     notes.appendChild(h("li", { text: "Themes are tagged by " + (DATA.themesSource === "llm"
       ? "a language model reading each title and abstract." : "keyword patterns with exclusions.") }));
     main.appendChild(notes);

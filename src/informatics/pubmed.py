@@ -1,31 +1,56 @@
-"""Import a PubMed comparison corpus through NCBI's E-utilities.
+"""Import PubMed records: the clinical side of AI in medicine.
 
 arXiv shows the computer-science side of AI in medicine; PubMed shows the clinical literature.
-``informatics import-pubmed --set pubmed`` writes ``data/raw/pubmed.parquet`` in the same schema
-as the arXiv sets, so the same filter, themes and concepts apply, and
-``informatics analyze --set cs --set pubmed`` compares them side by side.
+Both imports write ``data/raw/<set>.parquet`` in the same schema as the arXiv sets, so the same
+filter, themes and concepts apply, and ``informatics analyze --set cs --set pubmed`` compares
+them side by side. There are two ways in:
 
-ESearch returns at most 10,000 records per query, so the search runs one publication year at a
-time and keeps up to ``per_year`` records of each (the first ones in PubMed's default order: a
-sample, not the whole literature). NCBI allows 3 requests per second without an API key and 10
-with one (``--api-key`` or ``NCBI_API_KEY``).
+* ``import-pubmed`` (source ``pubmed-sample``) searches NCBI's E-utilities. ESearch returns at
+  most 10,000 records per query, so the search runs one publication year at a time and keeps up
+  to ``per_year`` records of each: a sample, not the whole literature. NCBI allows 3 requests
+  per second without an API key and 10 with one (``--api-key`` or ``NCBI_API_KEY``).
+* ``import-pubmed-files`` (source ``pubmed-baseline``) reads the annual baseline files
+  (https://ftp.ncbi.nlm.nih.gov/pubmed/baseline/, plus the daily update files if wanted) and
+  keeps every record with an AI MeSH heading or an AI keyword in its title or abstract: the
+  whole indexed literature for that definition. MeSH indexing lags by months, which is why
+  keywords count too; otherwise the most recent year would look smaller than it is.
+
+Dates: a paper's year should mean the same thing in every set. For arXiv it is the month of
+first submission. For PubMed it is the earliest date the record has (received by the journal,
+published online, or published in print), which is the closest equivalent.
 """
 
 from __future__ import annotations
 
+import gzip
 import logging
 import re
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 
+from informatics import keywords
 from informatics.http_client import HttpClient
 from informatics.imports import _BatchWriter
+from informatics.normalize import clean_characters
 
 log = logging.getLogger(__name__)
 
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 DEFAULT_QUERY = '"artificial intelligence"[MeSH Terms]'
+SAMPLE_SOURCE, BASELINE_SOURCE = "pubmed-sample", "pubmed-baseline"
+# MeSH descriptors for AI (edit with --mesh). "Artificial Intelligence" has the others below it,
+# but files list the descriptors a record was indexed with, not their parents.
+AI_MESH = (
+    "Artificial Intelligence", "Machine Learning", "Deep Learning",
+    "Supervised Machine Learning", "Unsupervised Machine Learning", "Neural Networks, Computer",
+    "Natural Language Processing", "Support Vector Machine", "Expert Systems",
+    "Generative Artificial Intelligence", "Large Language Models",
+)  # fmt: skip
+# History dates that mark when a paper became (or was about to become) public; "revised" and
+# "medline" (indexing) are left out.
+_HISTORY = {"received", "accepted", "epublish", "aheadofprint", "ppublish", "pubmed", "entrez"}
 MAX_PER_QUERY = 9_999
 _MONTH_NAMES = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
 _MONTHS = {name: number for number, name in enumerate(_MONTH_NAMES, start=1)}
@@ -61,6 +86,26 @@ def parse_date(node: ET.Element | None) -> str | None:
     return f"{year}-{number:02d}" if number else year
 
 
+def _sort_key(date: str) -> tuple[int, int]:
+    """ "2019" sorts after "2019-03": a year without a month is less precise, not earlier."""
+    year, _, month = date.partition("-")
+    return int(year), int(month) if month else 12
+
+
+def earliest_date(article: ET.Element) -> str | None:
+    """The earliest date in a PubmedArticle: received, published online or in print."""
+    art = article.find("MedlineCitation/Article")
+    candidates = []
+    if art is not None:
+        candidates += [parse_date(d) for d in art.iterfind("ArticleDate")]
+        candidates.append(parse_date(art.find("Journal/JournalIssue/PubDate")))
+    for node in article.iterfind("PubmedData/History/PubMedPubDate"):
+        if node.get("PubStatus") in _HISTORY:
+            candidates.append(parse_date(node))
+    dates = [d for d in candidates if d]
+    return min(dates, key=_sort_key) if dates else None
+
+
 def parse_article(article: ET.Element) -> dict:
     citation = article.find("MedlineCitation")
     art = citation.find("Article") if citation is not None else None
@@ -94,8 +139,7 @@ def parse_article(article: ET.Element) -> dict:
             for d in citation.iterfind("MeshHeadingList/MeshHeading/DescriptorName")
             if d.text
         ],
-        "created": parse_date(art.find("ArticleDate"))
-        or parse_date(art.find("Journal/JournalIssue/PubDate")),
+        "created": earliest_date(article),
         "doi": doi,
         "journal_ref": art.findtext("Journal/Title"),
     }
@@ -138,7 +182,7 @@ def import_pubmed(
 ) -> int:
     client = client or HttpClient()
     delay = 0.11 if api_key else 0.34  # stay under NCBI's 10 / 3 requests per second
-    writer = _BatchWriter(Path(dest), "pubmed")
+    writer = _BatchWriter(Path(dest), SAMPLE_SOURCE)
     for year in years:
         total, pmids = search_year(client, query, year, per_year, api_key)
         log.info("%d: %d records match; importing %d", year, total, len(pmids))
@@ -147,3 +191,80 @@ def import_pubmed(
             writer.write(fetch_articles(client, pmids[start : start + batch_size], api_key))
             client.sleep(delay)
     return writer.close()
+
+
+def iter_pubmed_file(path: str | Path) -> Iterator[tuple[str, ET.Element | str]]:
+    """Stream a PubMed XML file (.xml or .xml.gz): ("article", element) for each record and
+    ("delete", pmid) for each deleted citation, keeping memory flat however big the file."""
+    path = Path(path)
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rb") as fh:
+        events = ET.iterparse(fh, events=("start", "end"))
+        _, root = next(events)
+        for event, element in events:
+            if event != "end":
+                continue
+            if element.tag == "PubmedArticle":
+                yield "article", element
+                root.clear()
+            elif element.tag == "DeleteCitation":
+                for pmid in element.iterfind("PMID"):
+                    if pmid.text:
+                        yield "delete", pmid.text.strip()
+                root.clear()
+
+
+def matches_ai(record: dict, mesh: Sequence[str] = AI_MESH, terms: str = "strict") -> bool:
+    """True if the record has one of the ``mesh`` descriptors, or (``terms`` "strict" or
+    "wide") an AI keyword in its title or abstract (keywords.AI, plus AI_CONTEXT if wide)."""
+    if set(record.get("categories") or []) & set(mesh):
+        return True
+    if terms == "none":
+        return False
+    text = clean_characters(f"{record.get('title') or ''}. {record.get('abstract') or ''}").lower()
+    if keywords.AI.hits(text):
+        return True
+    return terms == "wide" and bool(keywords.AI_CONTEXT.hits(text))
+
+
+def import_pubmed_files(
+    files: Iterable[str | Path],
+    dest: str | Path,
+    mesh: Sequence[str] = AI_MESH,
+    terms: str = "strict",
+    everything: bool = False,
+    batch_size: int = 5_000,
+) -> dict:
+    """Import PubMed baseline and update files, keeping AI records (see :func:`matches_ai`)
+    or, with ``everything``, all of them. Files are read newest first (by name), so a record
+    revised in an update file replaces its baseline version and deleted citations are dropped.
+    Returns counts: files, records read, kept, deleted."""
+    if terms not in ("none", "strict", "wide"):
+        raise ValueError(f"unknown keyword option {terms!r}; use none, strict or wide")
+    paths = sorted((Path(f) for f in files), key=lambda p: p.name, reverse=True)
+    if not paths:
+        raise ValueError("no PubMed files given")
+    writer = _BatchWriter(Path(dest), BASELINE_SOURCE)
+    deleted: set[str] = set()
+    counts: Counter[str] = Counter(files=len(paths))
+    rows: list[dict] = []
+    for path in paths:
+        for kind, item in iter_pubmed_file(path):
+            if kind == "delete":
+                deleted.add(f"pmid:{item}")
+                counts["deleted"] += 1
+                continue
+            counts["read"] += 1
+            record = parse_article(item)
+            # A newer version of the record (kept already) or its deletion wins.
+            if not record or record["id"] in deleted or record["id"] in writer.seen:
+                continue
+            if everything or matches_ai(record, mesh, terms):
+                rows.append(record)
+                if len(rows) >= batch_size:
+                    writer.write(rows)
+                    rows = []
+        log.info("%s: %d records read, %d kept so far", path.name, counts["read"], writer.count)
+    writer.write(rows)
+    counts["kept"] = writer.close()
+    return dict(counts)

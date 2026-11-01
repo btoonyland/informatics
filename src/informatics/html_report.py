@@ -21,7 +21,7 @@ from urllib.parse import quote
 import numpy as np
 import pandas as pd
 
-from informatics import concepts
+from informatics import concepts, sources
 from informatics.arxiv_ids import _NEW_STYLE, _OLD_STYLE
 
 MAX_TABLE_PAPERS = 25_000  # papers listed in the page; papers.csv has all of them
@@ -223,6 +223,9 @@ def build_payload(ctx: dict, min_year_papers: int = 20) -> dict:
             for name, s in selections.items()
         ],  # fmt: skip
         "themesSource": info["config"].get("themes", "keywords"),
+        "population": [
+            line for name in sets for line in sources.describe(name, summaries.get(name))
+        ],
         "years": {
             "year": [int(y) for y in year_table["year"]],
             "selected": [int(v) for v in year_table["selected"]],

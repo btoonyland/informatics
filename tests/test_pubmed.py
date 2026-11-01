@@ -3,7 +3,14 @@ import xml.etree.ElementTree as ET
 import pytest
 from helpers import client_for, ok
 
-from informatics.pubmed import import_pubmed, parse_article, parse_date
+from informatics.pubmed import (
+    earliest_date,
+    import_pubmed,
+    import_pubmed_files,
+    matches_ai,
+    parse_article,
+    parse_date,
+)
 from informatics.storage import read_parquet
 
 ESEARCH = b"""<?xml version="1.0" encoding="UTF-8" ?>
@@ -94,4 +101,80 @@ def test_import_pubmed_by_year(tmp_path):
     df = read_parquet(tmp_path / "pubmed.parquet").set_index("id")
     # PubMed IDs carry no date, so the year comes from the publication date.
     assert (df.loc["pmid:31000001", "year"], df.loc["pmid:31000001", "month"]) == (2020, 2)
-    assert df.loc["pmid:31000002", "year"] == 2019 and df.loc["pmid:31000002", "source"] == "pubmed"
+    assert df.loc["pmid:31000002", "year"] == 2019
+    assert df.loc["pmid:31000002", "source"] == "pubmed-sample"
+
+
+def test_earliest_date_prefers_the_first_public_date():
+    article = ET.fromstring(
+        """<PubmedArticle><MedlineCitation><PMID>1</PMID><Article>
+        <Journal><JournalIssue><PubDate><Year>2021</Year><Month>Jan</Month></PubDate></JournalIssue>
+        </Journal><ArticleTitle>T</ArticleTitle>
+        <ArticleDate DateType="Electronic"><Year>2020</Year><Month>11</Month></ArticleDate>
+        </Article></MedlineCitation>
+        <PubmedData><History>
+          <PubMedPubDate PubStatus="received"><Year>2020</Year><Month>06</Month></PubMedPubDate>
+          <PubMedPubDate PubStatus="revised"><Year>2019</Year><Month>01</Month></PubMedPubDate>
+          <PubMedPubDate PubStatus="medline"><Year>2018</Year><Month>01</Month></PubMedPubDate>
+        </History></PubmedData></PubmedArticle>"""
+    )
+    # Received in June 2020: earlier than online (Nov 2020) and print (Jan 2021). "revised" and
+    # "medline" dates are not publication dates and are ignored.
+    assert earliest_date(article) == "2020-06"
+    assert parse_article(article)["created"] == "2020-06"
+
+
+def _article(pmid: int, title: str, mesh: str = "", year: int = 2020) -> str:
+    heading = (
+        f"<MeshHeadingList><MeshHeading><DescriptorName>{mesh}</DescriptorName></MeshHeading>"
+        "</MeshHeadingList>"
+        if mesh
+        else ""
+    )
+    return (
+        f"<PubmedArticle><MedlineCitation><PMID>{pmid}</PMID><Article><Journal><JournalIssue>"
+        f"<PubDate><Year>{year}</Year></PubDate></JournalIssue><Title>J</Title></Journal>"
+        f"<ArticleTitle>{title}</ArticleTitle><Abstract><AbstractText>Patients were studied."
+        f"</AbstractText></Abstract></Article>{heading}</MedlineCitation></PubmedArticle>"
+    )
+
+
+def _xml_gz(path, body: str) -> None:
+    import gzip
+
+    with gzip.open(path, "wt", encoding="utf-8") as fh:
+        fh.write(f'<?xml version="1.0"?><PubmedArticleSet>{body}</PubmedArticleSet>')
+
+
+def test_import_pubmed_files_keeps_ai_records_and_applies_updates(tmp_path):
+    _xml_gz(
+        tmp_path / "pubmed26n0001.xml.gz",
+        _article(1, "Deep learning for sepsis")  # keyword
+        + _article(2, "A trial of statins", mesh="Machine Learning")  # MeSH heading
+        + _article(3, "A trial of statins")  # neither: left out
+        + _article(4, "Neural networks for stroke")
+        + _article(5, "Random forests for asthma"),  # only a wide-net term
+    )
+    _xml_gz(
+        tmp_path / "pubmed26n0002.xml.gz",  # an update file: newer than the baseline
+        _article(1, "Deep learning for sepsis, revised", year=2021)
+        + "<DeleteCitation><PMID>4</PMID></DeleteCitation>",
+    )
+    counts = import_pubmed_files(sorted(tmp_path.glob("*.xml.gz")), tmp_path / "out.parquet")
+    assert counts == {"files": 2, "read": 6, "deleted": 1, "kept": 2}
+    df = read_parquet(tmp_path / "out.parquet").set_index("id")
+    assert sorted(df.index) == ["pmid:1", "pmid:2"]
+    assert df.loc["pmid:1", "title"] == "Deep learning for sepsis, revised"
+    assert df.loc["pmid:1", "year"] == 2021 and (df["source"] == "pubmed-baseline").all()
+    wide = import_pubmed_files(tmp_path.glob("*.xml.gz"), tmp_path / "w.parquet", terms="wide")
+    assert wide["kept"] == 3  # adds the random forests paper
+    everything = import_pubmed_files(tmp_path.glob("*.xml.gz"), tmp_path / "a.parquet",
+                                     everything=True)  # fmt: skip
+    assert everything["kept"] == 4  # all but the deleted record
+
+
+def test_matches_ai():
+    record = {"title": "Statins", "abstract": "", "categories": ["Deep Learning"]}
+    assert matches_ai(record) and not matches_ai(record, mesh=["Artificial Intelligence"])
+    assert matches_ai({"title": "LLMs for triage", "abstract": None, "categories": []})
+    assert not matches_ai({"title": "LLMs", "categories": []}, terms="none")

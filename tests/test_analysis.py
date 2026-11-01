@@ -121,6 +121,7 @@ def test_end_to_end_outputs(layout, corpus):
         "3 withdrawn, 2 not in English",
         "selected by the keyword rule",
         "### Trends (",
+        "### Population and sources",
     ):
         assert section in report
     assert info["selection"]["cs"]["method"] == "keywords"

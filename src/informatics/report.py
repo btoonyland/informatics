@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from informatics import tags
+from informatics import sources, tags
 
 
 def pct(value: float) -> str:
@@ -173,8 +173,15 @@ def render_report(ctx: dict) -> str:
         "label-sample` / `label-evaluate` measure the keyword rule, the wide net and the "
         "classifier; `label-themes-sample` / `label-themes-evaluate` measure the themes.\n"
     )
+    out.append("### Population and sources\n")
+    out.append(
+        "What each set is a sample of, and what its dates mean. Compare sets with this in view: "
+        "a capped sample per year cannot show growth in the literature.\n"
+    )
+    for name in sets:
+        out += [f"- {line}" for line in sources.describe(name, summaries.get(name))]
+    out.append("")
     out.append("### Papers per year\n")
-    out.append("Years come from the arXiv identifier (month of first submission).\n")
     years = ctx["year_table"].copy()
     keep = ["year", "selected"] + [c for c in years.columns if c.endswith("_selected_share")]
     years = years[keep]

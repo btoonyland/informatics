@@ -127,3 +127,20 @@ def test_theme_labelling_through_the_cli(layout, monkeypatch, capsys):
     assert main(["label-themes-evaluate", "--set", "cs"]) == 0
     assert Path("labels/cs_themes_evaluation.csv").exists()
     assert "privacy" in capsys.readouterr().out
+
+
+def test_pubmed_files_through_the_cli(tmp_path, monkeypatch, capsys):
+    from test_pubmed import _article, _xml_gz
+
+    from informatics.storage import read_json
+
+    monkeypatch.chdir(tmp_path)
+    Path("downloads").mkdir()
+    _xml_gz(Path("downloads/pubmed26n0001.xml.gz"), _article(1, "Deep learning for sepsis"))
+    assert main(["import-pubmed-files", "downloads/*.xml.gz", "--set", "pubmed"]) == 0
+    assert "Kept 1 of 1 PubMed records from 1 files" in capsys.readouterr().out
+    info = read_json("data/raw/pubmed_import.json")
+    assert info["source"] == "pubmed-baseline" and info["keywords"] == "strict"
+    assert "Artificial Intelligence" in info["mesh"] and info["counts"]["kept"] == 1
+    assert main(["import-pubmed-files", "nothing/*.xml.gz", "--set", "pubmed"]) == 1
+    assert "not found" in capsys.readouterr().err
