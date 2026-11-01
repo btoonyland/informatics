@@ -16,7 +16,13 @@ from informatics.filtering import FilterConfig, run_filter
 from informatics.records import RAW_SCHEMA, normalize_records
 from informatics.storage import read_json, read_parquet, write_parquet
 
-CONFIG = AnalysisConfig(min_df=3, cluster_min_df=3, k_candidates=(2, 3, 4, 5, 6))
+CONFIG = AnalysisConfig(
+    min_df=3,
+    cluster_min_df=3,
+    k_candidates=(2, 3, 4, 5, 6),
+    trend_min_papers=5,
+    trend_min_year_papers=1,
+)
 
 
 def _filter(layout, set_name="cs"):
@@ -39,7 +45,8 @@ def test_end_to_end_outputs(layout, corpus):
         "rising_phrases.csv", "falling_phrases.csv", "clusters.csv", "k_selection.csv",
         "themes.csv", "themes_by_year.csv", "themes_by_cluster.csv", "concepts.csv",
         "concepts_by_year.csv", "concepts_by_cluster.csv", "papers_by_year.csv",
-        "publication_by_year.csv", "run_info.json", "report.md",
+        "publication_by_year.csv", "run_info.json", "report.md", "theme_trends.csv",
+        "concept_trends.csv",
     }  # fmt: skip
     assert {p.name for p in out.iterdir()} == expected
 
@@ -88,6 +95,18 @@ def test_end_to_end_outputs(layout, corpus):
         "journal reference", "accepted (comments)", "no evidence",
     }  # fmt: skip
 
+    theme_trends = pd.read_csv(out / "theme_trends.csv").set_index("tag")
+    # Theme sentences were added at random, so no theme has a real trend.
+    assert (
+        theme_trends.loc["privacy", "adjusted_ci_low"]
+        < 1
+        < theme_trends.loc["privacy", "adjusted_ci_high"]
+    )
+    concept_trends = pd.read_csv(out / "concept_trends.csv")
+    assert set(concept_trends["dimension"]) == {
+        "disease area", "data type", "clinical task", "AI method",
+    }  # fmt: skip
+
     info = read_json(out / "run_info.json")
     assert info["counts"]["papers"] == len(papers) and info["counts"]["k"] == 4
     assert info["counts"]["near_duplicates_dropped"] == 3
@@ -101,6 +120,7 @@ def test_end_to_end_outputs(layout, corpus):
         "### Rising phrases",
         "3 withdrawn, 2 not in English",
         "selected by the keyword rule",
+        "### Trends (",
     ):
         assert section in report
     assert info["selection"]["cs"]["method"] == "keywords"

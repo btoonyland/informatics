@@ -21,7 +21,7 @@ import pandas as pd
 import pyarrow as pa
 import sklearn
 
-from informatics import __version__, concepts, tags
+from informatics import __version__, concepts, tags, trends
 from informatics.cache import TextCache
 from informatics.clustering import DEFAULT_K_CANDIDATES, cluster_papers
 from informatics.embeddings import embedding_text, load_vectors, model_slug
@@ -59,8 +59,8 @@ OUTPUT_FILES = (
     "rising_phrases.csv", "falling_phrases.csv", "phrases_between_sets.csv", "clusters.csv",
     "k_selection.csv", "themes.csv", "themes_by_year.csv", "themes_by_cluster.csv",
     "themes_by_set.csv", "concepts.csv", "concepts_by_year.csv", "concepts_by_cluster.csv",
-    "concepts_by_set.csv", "papers_by_year.csv", "publication_by_year.csv", "countries.csv",
-    "run_info.json", "report.md",
+    "concepts_by_set.csv", "theme_trends.csv", "concept_trends.csv", "papers_by_year.csv",
+    "publication_by_year.csv", "countries.csv", "run_info.json", "report.md",
 )  # fmt: skip
 PAPER_COLUMNS = [
     "id", "title", "authors", "categories", "year", "month", "corpora", "cluster", "ai_terms",
@@ -94,6 +94,10 @@ class AnalysisConfig:
     use_cache: bool = True
     selection: str = "auto"  # see selection.py: auto, keywords or relevance
     themes: str = "keywords"  # or "llm": the themes a language model found (llm.py)
+    # Trend regressions (trends.py): tags need this many papers with and without them, and
+    # years with fewer papers are left out.
+    trend_min_papers: int = 20
+    trend_min_year_papers: int = 20
 
 
 def combine(frames: list[pd.DataFrame]) -> pd.DataFrame:
@@ -385,6 +389,26 @@ def run_analysis(
             concept_tables[by].append(table.assign(dimension=dimension))
     concept_tables = {k: pd.concat(v, ignore_index=True) for k, v in concept_tables.items()}
 
+    # Trends within topics ---------------------------------------------------------------------
+    adjust_for = ["cluster"] + (["corpus_group"] if len(sets) > 1 else [])
+    limits = {
+        "min_papers": config.trend_min_papers,
+        "min_year_papers": config.trend_min_year_papers,
+    }
+    theme_trends = trends.tag_trends(papers, "themes", theme_names, adjust_for, **limits)
+    concept_trends = pd.concat(
+        [
+            trends.tag_trends(papers, concepts.column(d), list(names), adjust_for, **limits).assign(
+                dimension=d
+            )
+            for d, names in concepts.CONCEPTS.items()
+        ],
+        ignore_index=True,
+    )
+    concept_trends["adjusted_q_value"] = trends.benjamini_hochberg(
+        concept_trends["adjusted_p_value"]
+    )
+
     # Publication data -------------------------------------------------------------------------
     comments = papers["comments"] if "comments" in papers else pd.Series(None, index=papers.index)
     papers["publication_status"] = [
@@ -455,6 +479,8 @@ def run_analysis(
         "concepts.csv": concept_tables["overall"],
         "concepts_by_year.csv": concept_tables["year"],
         "concepts_by_cluster.csv": concept_tables["cluster"],
+        "theme_trends.csv": theme_trends,
+        "concept_trends.csv": concept_trends,
         "papers_by_year.csv": year_table,
         "publication_by_year.csv": publication,
     }
@@ -480,6 +506,8 @@ def run_analysis(
             "clusters": clusters,
             "theme_tables": theme_tables,
             "concept_tables": concept_tables,
+            "theme_trends": theme_trends,
+            "concept_trends": concept_trends,
             "publication": publication,
             "countries": countries,
         }

@@ -158,6 +158,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--embeddings", metavar="MODEL", help="cluster on vectors from `embed`")
     p.add_argument("--no-cache", action="store_true", help="re-prepare every text")
     p.add_argument(
+        "--trend-min-papers", type=int, default=20, help="trends: papers with and without a tag"
+    )
+    p.add_argument("--trend-min-year-papers", type=int, default=20, help="trends: papers in a year")
+    p.add_argument(
         "--themes",
         choices=["keywords", "llm"],
         default="keywords",

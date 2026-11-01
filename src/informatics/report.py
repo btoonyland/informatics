@@ -69,6 +69,62 @@ def _top_tags(table: pd.DataFrame, n: int) -> list[str]:
     return table[table["papers"] > 0].head(n)["tag"].tolist()
 
 
+def _or_ci(value: float, low: float, high: float) -> str:
+    return "" if pd.isna(value) else f"{value:.2f} ({low:.2f}-{high:.2f})"
+
+
+def _trend_table(table: pd.DataFrame, label: str, with_dimension: bool = False) -> str:
+    shown = table[table["adjusted_or_per_year"].notna()]
+    out = pd.DataFrame(
+        {
+            label: shown["tag"],
+            "papers": shown["papers"],
+            "odds ratio per year": [
+                _or_ci(v, lo, hi)
+                for v, lo, hi in zip(
+                    shown["or_per_year"], shown["ci_low"], shown["ci_high"], strict=True
+                )
+            ],
+            "within topics": [
+                _or_ci(v, lo, hi)
+                for v, lo, hi in zip(
+                    shown["adjusted_or_per_year"],
+                    shown["adjusted_ci_low"],
+                    shown["adjusted_ci_high"],
+                    strict=True,
+                )
+            ],
+            "points per year": shown["adjusted_pp_per_year"].map(
+                lambda v: "" if pd.isna(v) else f"{v:+.2f}"
+            ),
+            "q": shown["adjusted_q_value"].map(lambda v: "" if pd.isna(v) else f"{v:.3f}"),
+        }
+    )
+    if with_dimension:
+        out.insert(0, "dimension", shown["dimension"].to_numpy())
+    return md_table(out)
+
+
+def _trend_section(table: pd.DataFrame, label: str, sets: list[str]) -> str:
+    estimated = table[table["adjusted_or_per_year"].notna()]
+    if estimated.empty:
+        return (
+            "### Trends\n\nToo few papers per year for trend estimates (see "
+            "`--trend-min-papers` / `--trend-min-year-papers`).\n"
+        )
+    adjusted = "topic cluster" + (" and set" if len(sets) > 1 else "")
+    years = estimated["years"].iloc[0]
+    intro = (
+        f"### Trends ({years})\n\nLogistic regressions of whether a paper has the {label} on "
+        "its publication date (`trends.py`). An odds ratio above 1 means the share grows each "
+        f"year. *Within topics* adjusts for the {adjusted}: when it is much closer to 1 than "
+        "the plain odds ratio, the change comes from some topics growing faster than others, "
+        "not from papers within a topic changing. *Points per year* is the within-topic change "
+        "in percentage points; *q* is the false discovery rate across all rows.\n"
+    )
+    return intro + "\n" + _trend_table(estimated.sort_values("adjusted_or_per_year"), label)
+
+
 def render_report(ctx: dict) -> str:
     """``ctx`` holds the tables produced by :func:`informatics.analysis.run_analysis`."""
     sets: list[str] = ctx["sets"]
@@ -223,6 +279,7 @@ def render_report(ctx: dict) -> str:
     by_year = themes["year"][themes["year"]["papers_in_group"] >= 20]
     out.append("### Themes by year (years with at least 20 papers; 95% intervals)\n")
     out.append(md_table(tags.pivot_shares(by_year, "year", top_themes) if len(by_year) else None))
+    out.append(_trend_section(ctx["theme_trends"], "theme", info["sets"]))
     out.append("### Themes by cluster\n")
     out.append(md_table(tags.pivot_shares(themes["cluster"], "cluster", top_themes, with_ci=False)))
     if "corpus_group" in themes:
@@ -231,6 +288,14 @@ def render_report(ctx: dict) -> str:
 
     concepts = ctx["concept_tables"]
     out.append("## Concepts\n")
+    moving = ctx["concept_trends"]
+    moving = moving[moving["adjusted_q_value"] < 0.05].sort_values("adjusted_or_per_year")
+    if len(moving):
+        out.append(
+            "Concepts whose share changed within topics (false discovery rate below 5%; full "
+            "table in concept_trends.csv):\n"
+        )
+        out.append(_trend_table(moving, "concept", with_dimension=True))
     out.append(
         "What the papers are about, along four dimensions (curated patterns in concepts.py; a "
         "paper can have several concepts or none).\n"

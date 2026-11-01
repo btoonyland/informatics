@@ -419,6 +419,8 @@ def cmd_analyze(args: argparse.Namespace, layout: Layout) -> None:
         use_cache=not args.no_cache,
         selection=args.selection,
         themes=args.themes,
+        trend_min_papers=args.trend_min_papers,
+        trend_min_year_papers=args.trend_min_year_papers,
     )
     out = run_analysis(args.sets, layout, args.out, config)
     print(f"Results written to {out} (start with {out / 'report.md'})")
