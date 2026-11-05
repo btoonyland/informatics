@@ -58,3 +58,13 @@ def test_parse_retry_after():
     assert parse_retry_after("Sun, 01 Nov 2026 11:00:00 GMT", now=now) == 0.0
     assert parse_retry_after("soon") is None
     assert parse_retry_after(None) is None
+
+
+def test_errors_say_whether_the_connection_failed():
+    down = requests.ConnectionError("no route to host")
+    with pytest.raises(HttpError) as offline:
+        client_for([down, down], max_retries=1).get("https://example.org")
+    assert offline.value.network
+    with pytest.raises(HttpError) as busy:
+        client_for([FakeResponse(503), FakeResponse(503)], max_retries=1).get("https://example.org")
+    assert not busy.value.network

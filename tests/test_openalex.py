@@ -63,3 +63,22 @@ def test_import_stops_at_max_records(tmp_path):
     client = client_for([_page([WORK, {**WORK, "id": "https://openalex.org/W2"}], "abc")])
     assert import_openalex(tmp_path / "oa.parquet", client=client, max_records=1) == 1
     assert len(client.session.calls) == 1
+
+
+def test_a_failed_import_keeps_the_previous_file(tmp_path):
+    import pandas as pd
+    import pytest
+    import requests
+
+    from informatics.http_client import HttpError
+    from informatics.storage import write_parquet
+
+    dest = tmp_path / "oa.parquet"
+    write_parquet(pd.DataFrame({"id": ["openalex:W1"]}), dest)
+    before = dest.read_bytes()
+    down = requests.ConnectionError("network is unreachable")
+    client = client_for([_page([WORK], "abc"), down, down], max_retries=1)
+    with pytest.raises(HttpError):
+        import_openalex(dest, client=client)
+    assert dest.read_bytes() == before  # untouched: written only when the import completes
+    assert [p.name for p in tmp_path.iterdir()] == ["oa.parquet"]  # no partial temporary file

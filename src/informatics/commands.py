@@ -108,6 +108,7 @@ def cmd_harvest(args: argparse.Namespace, layout: Layout) -> None:
         delay=args.delay,
         restart=args.restart,
         max_pages=args.max_pages,
+        max_retries=args.retries,
     )
     if state["complete"]:
         consolidate(target, layout.raw(args.set_name))
@@ -135,6 +136,7 @@ def cmd_update(args: argparse.Namespace, layout: Layout) -> None:
         date_until=args.date_until,
         delay=args.delay,
         max_pages=args.max_pages,
+        max_retries=args.retries,
     )
     if not state["complete"]:
         print(f"Paused after {state['records']} records; run the same command to continue.")
@@ -314,7 +316,17 @@ def _classify_llm(args: argparse.Namespace, layout: Layout, candidates: pd.DataF
             request = config.request(todo[0], paper_message(first["title"], first["abstract"]))
             print(json.dumps(request, indent=2, ensure_ascii=False))
         return
-    counts = classifier.run(papers, wait=args.wait, retry_failed=args.retry_failed)
+    try:
+        counts = classifier.run(papers, wait=args.wait, retry_failed=args.retry_failed)
+    except Exception as exc:
+        if not _is_api_error(exc):
+            raise
+        raise RuntimeError(
+            f"the Anthropic API failed ({type(exc).__name__}: {exc}). Nothing is lost: submitted "
+            f"batches keep running and are listed in {layout.llm_batches(args.set_name)}, and "
+            f"answers already collected are in {layout.llm(args.set_name)}. Run the same "
+            "command again to continue."
+        ) from exc
     done = ", ".join(f"{n:,} {status}" for status, n in sorted(counts.items()) if n)
     print(f"Language-model answers for {len(papers):,} papers: {done or 'none yet'}.")
     if counts["waiting"] or counts["unanswered"]:
@@ -336,6 +348,15 @@ def _classify_llm(args: argparse.Namespace, layout: Layout, candidates: pd.DataF
         f"({info['keyword_rule_fallback']:,} decided by the keyword rule because the model gave "
         f"no answer) -> {layout.relevance(args.set_name)}"
     )
+
+
+def _is_api_error(exc: Exception) -> bool:
+    """An error from the Anthropic SDK (connection, rate limit, server or request errors)."""
+    try:
+        import anthropic
+    except ImportError:
+        return False
+    return isinstance(exc, anthropic.APIError)
 
 
 def cmd_label_sample(args: argparse.Namespace, layout: Layout) -> None:

@@ -16,7 +16,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from informatics.http_client import HttpClient
+from informatics.http_client import HttpClient, HttpError
 from informatics.records import RAW_SCHEMA, clean_text, normalize_records
 from informatics.storage import read_json, write_json, write_parquet
 
@@ -100,11 +100,14 @@ def harvest(
     restart: bool = False,
     max_pages: int | None = None,
     client: HttpClient | None = None,
+    max_retries: int = 8,
 ) -> dict:
     """Harvest ``set_spec`` into ``out_dir/pages``; returns the saved state.
 
     Re-running with the same arguments resumes an interrupted harvest. ``date_from`` and
     ``date_until`` filter on the OAI datestamp (last metadata change), not the submission date.
+    ``max_retries`` sets how long a lost connection is waited out (see HttpClient) when no
+    ``client`` is given.
     """
     out_dir = Path(out_dir)
     pages_dir, state_path = out_dir / "pages", out_dir / "state.json"
@@ -129,7 +132,7 @@ def harvest(
         log.info("harvest of %s is already complete (%d records)", set_spec, state["records"])
         return state
 
-    client = client or HttpClient()
+    client = client or HttpClient(max_retries=max_retries)
     pages_this_run = 0
     while True:
         if state["token"]:
@@ -146,6 +149,13 @@ def harvest(
                     "re-run with --restart to start the harvest again"
                 ) from exc
             raise
+        except HttpError as exc:  # e.g. the internet connection is down
+            pages = state["next_page"] - 1
+            raise HarvestError(
+                f"{exc}. Nothing is lost: the {state['records']:,} records downloaded so far "
+                f"({pages} page{'' if pages == 1 else 's'}) are saved in {out_dir}. Run the same "
+                f"command again to continue from page {state['next_page']}."
+            ) from exc
         page = state["next_page"]
         page_df = pd.DataFrame.from_records(records, columns=PAGE_COLUMNS)
         write_parquet(page_df, pages_dir / f"page-{page:06d}.parquet", schema=PAGE_SCHEMA)

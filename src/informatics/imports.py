@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import email.utils
 import json
 import logging
@@ -65,7 +66,11 @@ def kaggle_record(rec: dict) -> dict:
 
 
 class _BatchWriter:
-    """Write normalised records to Parquet in batches, dropping repeated IDs."""
+    """Write normalised records to Parquet in batches, dropping repeated IDs.
+
+    Records go to a temporary file that replaces ``dest`` only when :meth:`close` succeeds. Used
+    as a context manager, an import that fails or is interrupted (no internet, Ctrl+C) removes
+    the temporary file and leaves an existing ``dest`` as it was."""
 
     def __init__(self, dest: Path, source: str):
         self.dest, self.source = Path(dest), source
@@ -92,8 +97,24 @@ class _BatchWriter:
             pq.write_table(RAW_SCHEMA.empty_table(), self.tmp)
         else:
             self.writer.close()
+            self.writer = None
         self.tmp.replace(self.dest)
         return self.count
+
+    def abort(self) -> None:
+        """Drop everything written so far."""
+        if self.writer is not None:
+            with contextlib.suppress(Exception):
+                self.writer.close()
+            self.writer = None
+        self.tmp.unlink(missing_ok=True)
+
+    def __enter__(self) -> _BatchWriter:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if exc_type is not None:
+            self.abort()
 
 
 def _iter_json_lines(path: Path) -> Iterator[dict]:
@@ -107,15 +128,16 @@ def import_kaggle(
     snapshot: str | Path, set_name: str, dest: str | Path, batch: int = 50_000
 ) -> int:
     """Extract one archive from the Kaggle snapshot (streamed; the file is several GB)."""
-    writer, rows = _BatchWriter(Path(dest), "kaggle"), []
-    for rec in _iter_json_lines(Path(snapshot)):
-        if in_set((rec.get("categories") or "").split(), set_name):
-            rows.append(kaggle_record(rec))
-            if len(rows) >= batch:
-                writer.write(rows)
-                rows = []
-    writer.write(rows)
-    count = writer.close()
+    rows: list[dict] = []
+    with _BatchWriter(Path(dest), "kaggle") as writer:
+        for rec in _iter_json_lines(Path(snapshot)):
+            if in_set((rec.get("categories") or "").split(), set_name):
+                rows.append(kaggle_record(rec))
+                if len(rows) >= batch:
+                    writer.write(rows)
+                    rows = []
+        writer.write(rows)
+        count = writer.close()
     log.info("imported %d %s records from %s into %s", count, set_name, snapshot, dest)
     return count
 
@@ -142,13 +164,13 @@ def legacy_frame(chunk: pd.DataFrame) -> pd.DataFrame:
 
 def import_legacy_csv(path: str | Path, dest: str | Path, chunksize: int = 100_000) -> int:
     """Convert a CSV from the old harvester (e.g. All_CS.csv) to the canonical Parquet file."""
-    writer = _BatchWriter(Path(dest), "legacy-csv")
     # dtype=str keeps IDs such as 0708.2931 intact; only empty cells count as missing.
     reader = pd.read_csv(
         path, dtype=str, keep_default_na=False, na_values=[""], chunksize=chunksize
     )
-    for chunk in reader:
-        writer.write(legacy_frame(chunk))
-    count = writer.close()
+    with _BatchWriter(Path(dest), "legacy-csv") as writer:
+        for chunk in reader:
+            writer.write(legacy_frame(chunk))
+        count = writer.close()
     log.info("imported %d records from %s into %s", count, path, dest)
     return count

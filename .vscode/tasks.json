@@ -3,10 +3,10 @@
   "tasks": [
     {
       "label": "1. Harvest a set from arXiv",
-      "detail": "Downloads records changed since the start date. Takes hours; if stopped, run it again to continue.",
+      "detail": "Downloads records changed since the start date. Takes hours; waits out internet outages of up to about 8 hours; if stopped, run it again to continue.",
       "type": "process",
       "command": "${workspaceFolder}/.venv/bin/informatics",
-      "args": ["harvest", "--set", "${input:set}", "--from", "${input:from}"],
+      "args": ["harvest", "--set", "${input:set}", "--from", "${input:from}", "--retries", "40"],
       "problemMatcher": []
     },
     {
@@ -58,7 +58,7 @@
       "label": "Update a set (what changed since the last harvest)",
       "type": "process",
       "command": "${workspaceFolder}/.venv/bin/informatics",
-      "args": ["update", "--set", "${input:set}"],
+      "args": ["update", "--set", "${input:set}", "--retries", "40"],
       "problemMatcher": []
     },
     {

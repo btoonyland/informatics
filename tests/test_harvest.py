@@ -37,8 +37,12 @@ def test_harvest_resumes_after_failure_and_consolidates(tmp_path):
     error = requests.ConnectionError("connection reset")
     # First run: page 1 arrives, then the connection keeps failing.
     first = client_for([ok("oai_page1.xml"), error, error], max_retries=1)
-    with pytest.raises(HttpError, match="after 1 retries"):
+    with pytest.raises(HarvestError, match="after 1 retries") as stopped:
         harvest("cs", out, client=first, delay=0)
+    message = str(stopped.value)
+    assert "Nothing is lost: the 2 records downloaded so far (1 page) are saved" in message
+    assert message.endswith("Run the same command again to continue from page 2.")
+    assert isinstance(stopped.value.__cause__, HttpError) and stopped.value.__cause__.network
     state = json.loads((out / "state.json").read_text())
     assert state["token"] == "token-page-2" and state["next_page"] == 2 and not state["complete"]
 
@@ -143,7 +147,7 @@ def test_update_through_the_cli(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     _raw_from_page(tmp_path / "data/raw/cs.parquet", "oai_page1.xml")
     client = client_for([ok(fixture_bytes("oai_page2.xml"))])
-    monkeypatch.setattr("informatics.harvest.HttpClient", lambda: client)
+    monkeypatch.setattr("informatics.harvest.HttpClient", lambda **settings: client)
     assert main(["update", "--set", "cs", "--delay", "0"]) == 0
     assert "1 new and 1 changed records since 2015-02-01" in capsys.readouterr().out
     assert client.session.calls[0]["from"] == "2015-02-01"  # only what changed since then

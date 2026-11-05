@@ -93,22 +93,22 @@ def import_openalex(
         params["api_key"] = api_key
     if mailto:
         params["mailto"] = mailto
-    writer = _BatchWriter(Path(dest), SOURCE)
     cursor: str | None = "*"
     seen = 0
-    while cursor:
-        page = client.get_json(OPENALEX_WORKS, {**params, "cursor": cursor})
-        results = page.get("results") or []
-        if not results:
-            break
-        if max_records is not None:
-            results = results[: max(0, max_records - seen)]
-        writer.write([r for r in map(work_record, results) if r["id"]])
-        seen += len(results)
-        total = (page.get("meta") or {}).get("count")
-        log.info("OpenAlex: %d of %s works", seen, total if total is not None else "?")
-        if max_records is not None and seen >= max_records:
-            break
-        cursor = (page.get("meta") or {}).get("next_cursor")
-        client.sleep(delay)
-    return writer.close()
+    with _BatchWriter(Path(dest), SOURCE) as writer:
+        while cursor:
+            page = client.get_json(OPENALEX_WORKS, {**params, "cursor": cursor})
+            results = page.get("results") or []
+            if not results:
+                break
+            if max_records is not None:
+                results = results[: max(0, max_records - seen)]
+            writer.write([r for r in map(work_record, results) if r["id"]])
+            seen += len(results)
+            total = (page.get("meta") or {}).get("count")
+            log.info("OpenAlex: %d of %s works", seen, total if total is not None else "?")
+            if max_records is not None and seen >= max_records:
+                break
+            cursor = (page.get("meta") or {}).get("next_cursor")
+            client.sleep(delay)
+        return writer.close()

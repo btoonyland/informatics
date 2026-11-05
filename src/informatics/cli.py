@@ -103,6 +103,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--delay", type=float, default=5.0, help="seconds between requests")
     p.add_argument("--max-pages", type=int, help="stop after N pages (run again to continue)")
     p.add_argument("--restart", action="store_true", help="discard a previous partial harvest")
+    p.add_argument(
+        "--retries",
+        type=int,
+        default=8,
+        help="network retries before stopping (waits grow to 15 min each): the default rides "
+        "out about 36 min without internet, 40 about 8.5 hours",
+    )
 
     p = sub.add_parser(
         "update", help="harvest what changed since the last harvest and merge it into data/raw"
@@ -115,6 +122,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--base-url", default=DEFAULT_BASE_URL)
     p.add_argument("--delay", type=float, default=5.0, help="seconds between requests")
     p.add_argument("--max-pages", type=int, help="stop after N pages (run again to continue)")
+    p.add_argument(
+        "--retries",
+        type=int,
+        default=8,
+        help="network retries before stopping (waits grow to 15 min each): the default rides "
+        "out about 36 min without internet, 40 about 8.5 hours",
+    )
 
     p = sub.add_parser("list-sets", help="list the sets the OAI-PMH endpoint offers")
     p.add_argument("--base-url", default=DEFAULT_BASE_URL)
@@ -329,5 +343,11 @@ def main(argv: list[str] | None = None) -> int:
         COMMANDS[args.command](args, Layout(args.data_dir, args.results_dir))
     except (FileNotFoundError, ValueError, RuntimeError, HarvestError, HttpError) as exc:
         print(f"informatics: error: {exc}", file=sys.stderr)
+        if isinstance(exc, HttpError) and exc.network:  # harvest and update say more themselves
+            print(
+                "informatics: the internet connection failed. Nothing was written; run the same "
+                "command again once it is back (this download starts from the beginning).",
+                file=sys.stderr,
+            )
         return 1
     return 0

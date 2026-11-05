@@ -182,15 +182,15 @@ def import_pubmed(
 ) -> int:
     client = client or HttpClient()
     delay = 0.11 if api_key else 0.34  # stay under NCBI's 10 / 3 requests per second
-    writer = _BatchWriter(Path(dest), SAMPLE_SOURCE)
-    for year in years:
-        total, pmids = search_year(client, query, year, per_year, api_key)
-        log.info("%d: %d records match; importing %d", year, total, len(pmids))
-        client.sleep(delay)
-        for start in range(0, len(pmids), batch_size):
-            writer.write(fetch_articles(client, pmids[start : start + batch_size], api_key))
+    with _BatchWriter(Path(dest), SAMPLE_SOURCE) as writer:
+        for year in years:
+            total, pmids = search_year(client, query, year, per_year, api_key)
+            log.info("%d: %d records match; importing %d", year, total, len(pmids))
             client.sleep(delay)
-    return writer.close()
+            for start in range(0, len(pmids), batch_size):
+                writer.write(fetch_articles(client, pmids[start : start + batch_size], api_key))
+                client.sleep(delay)
+        return writer.close()
 
 
 def iter_pubmed_file(path: str | Path) -> Iterator[tuple[str, ET.Element | str]]:
@@ -244,27 +244,27 @@ def import_pubmed_files(
     paths = sorted((Path(f) for f in files), key=lambda p: p.name, reverse=True)
     if not paths:
         raise ValueError("no PubMed files given")
-    writer = _BatchWriter(Path(dest), BASELINE_SOURCE)
     deleted: set[str] = set()
     counts: Counter[str] = Counter(files=len(paths))
     rows: list[dict] = []
-    for path in paths:
-        for kind, item in iter_pubmed_file(path):
-            if kind == "delete":
-                deleted.add(f"pmid:{item}")
-                counts["deleted"] += 1
-                continue
-            counts["read"] += 1
-            record = parse_article(item)
-            # A newer version of the record (kept already) or its deletion wins.
-            if not record or record["id"] in deleted or record["id"] in writer.seen:
-                continue
-            if everything or matches_ai(record, mesh, terms):
-                rows.append(record)
-                if len(rows) >= batch_size:
-                    writer.write(rows)
-                    rows = []
-        log.info("%s: %d records read, %d kept so far", path.name, counts["read"], writer.count)
-    writer.write(rows)
-    counts["kept"] = writer.close()
+    with _BatchWriter(Path(dest), BASELINE_SOURCE) as writer:
+        for path in paths:
+            for kind, item in iter_pubmed_file(path):
+                if kind == "delete":
+                    deleted.add(f"pmid:{item}")
+                    counts["deleted"] += 1
+                    continue
+                counts["read"] += 1
+                record = parse_article(item)
+                # A newer version of the record (kept already) or its deletion wins.
+                if not record or record["id"] in deleted or record["id"] in writer.seen:
+                    continue
+                if everything or matches_ai(record, mesh, terms):
+                    rows.append(record)
+                    if len(rows) >= batch_size:
+                        writer.write(rows)
+                        rows = []
+            log.info("%s: %d records read, %d kept so far", path.name, counts["read"], writer.count)
+        writer.write(rows)
+        counts["kept"] = writer.close()
     return dict(counts)

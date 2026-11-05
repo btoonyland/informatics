@@ -76,6 +76,25 @@ and revised in 2026 would be lost. The reports state the window, and rising and 
 compare periods inside it. To include the current year so far, use `--years 2021-2026`; its
 share-based numbers are comparable, its paper count is not yet complete.
 
+## If the internet connection drops
+
+- **`harvest` and `update`** save every page as it arrives (`data/raw/<set>_harvest/` or
+  `data/raw/<set>_updates/`), with a record of where they are in the list. A short outage is
+  waited out automatically: failed requests are retried with growing pauses, about 36 minutes in
+  all (`--retries 40` waits about 8.5 hours, for unattended runs). After that the command stops
+  and says how much is saved; run **the same command** again and it continues where it stopped.
+  Do not add `--restart` (it discards the saved pages) or change `--from`/`--until` (it refuses,
+  to protect them). The raw file only changes once a harvest or update is complete. Only if the
+  break was so long that arXiv no longer accepts the saved position does the command say so;
+  then `--restart` is the way on.
+- **`import-pubmed`, `import-openalex`, `enrich`, `count`** write nothing until they finish, and an
+  existing file stays as it was. Run them again; they start from the beginning (minutes).
+- **`classify --method llm`**: submitted batches keep running at Anthropic and answers collected
+  so far are saved; run the same command again to collect the rest (results are kept 29 days).
+- **`embed`** needs the internet only to download the model the first time.
+- Everything else (`filter`, labelling, `classify` with a trained model, `analyze`, the reports)
+  works offline once the data is downloaded.
+
 ## Pipeline
 
 ```

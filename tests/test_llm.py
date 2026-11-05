@@ -342,3 +342,26 @@ def test_against_the_real_sdk(tmp_path):
     assert counts["ok"] == 1 and counts["retry"] == 1
     params = received["body"]["requests"][0]["params"]
     assert params["output_config"]["format"]["type"] == "json_schema"
+
+
+def test_a_lost_connection_to_the_api_loses_nothing(layout, monkeypatch, capsys):
+    anthropic = pytest.importorskip("anthropic")
+
+    class ConnectionLost(anthropic.APIError):
+        def __init__(self):
+            Exception.__init__(self, "Connection error.")
+
+    class Offline(FakeBatches):
+        def retrieve(self, batch_id):
+            raise ConnectionLost()
+
+    batches = Offline()
+    monkeypatch.chdir(layout.data_dir.parent)
+    monkeypatch.setattr(llm, "make_client", lambda: fake_client(batches))
+    assert main(["filter", "--set", "cs"]) == 0
+    assert main(["classify", "--set", "cs", "--method", "llm", "--max-papers", "5"]) == 1
+    err = capsys.readouterr().err
+    assert "Nothing is lost: submitted batches keep running" in err
+    assert len(batches.created) == 1  # the batch was submitted and recorded before the failure
+    recorded = json.loads(Path("data/interim/cs_llm_batches.json").read_text())["batches"]
+    assert recorded[0]["id"] == "msgbatch_000"

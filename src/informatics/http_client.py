@@ -23,7 +23,12 @@ RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
 class HttpError(RuntimeError):
-    pass
+    """A request failed for good. ``network`` is True when the connection itself failed (no
+    internet, DNS, timeouts), rather than the server answering with an error."""
+
+    def __init__(self, message: str, network: bool = False):
+        super().__init__(message)
+        self.network = network
 
 
 def parse_retry_after(value: str | None, now: datetime | None = None) -> float | None:
@@ -61,10 +66,11 @@ class HttpClient:
     def get(self, url: str, params: dict[str, Any] | None = None) -> bytes:
         """GET ``url`` and return the raw bytes (never ``response.text``: see :meth:`get_xml`)."""
         for attempt in range(self.max_retries + 1):
+            network = False
             try:
                 response = self.session.get(url, params=params, timeout=self.timeout)
             except requests.RequestException as exc:
-                reason, retry_after = f"network error ({exc})", None
+                reason, retry_after, network = f"network error ({exc})", None, True
             else:
                 if response.status_code == 200:
                     return response.content
@@ -75,7 +81,9 @@ class HttpClient:
                 reason = f"HTTP {response.status_code}"
                 retry_after = parse_retry_after(response.headers.get("Retry-After"))
             if attempt == self.max_retries:
-                raise HttpError(f"giving up on {url} after {self.max_retries} retries ({reason})")
+                raise HttpError(
+                    f"giving up on {url} after {self.max_retries} retries ({reason})", network
+                )
             wait = retry_after if retry_after is not None else self.backoff * 2**attempt
             wait = min(wait, self.max_wait)
             log.warning(

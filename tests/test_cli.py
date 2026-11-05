@@ -209,3 +209,18 @@ def test_vscode_tasks_are_valid_commands():
             parse_args(args)  # exits on an unknown option or value
             checked += 1
     assert checked >= 7
+
+
+def test_network_failures_say_how_to_continue(tmp_path, monkeypatch, capsys):
+    import requests
+    from helpers import client_for
+
+    assert parse_args(["harvest", "--set", "cs"]).retries == 8
+    assert parse_args(["update", "--set", "cs", "--retries", "40"]).retries == 40
+    monkeypatch.chdir(tmp_path)
+    down = requests.ConnectionError("temporary failure in name resolution")
+    offline = client_for([down, down], max_retries=1)
+    monkeypatch.setattr("informatics.count.HttpClient", lambda **settings: offline)
+    assert main(["count", "--set", "cs"]) == 1
+    err = capsys.readouterr().err
+    assert "network error" in err and "run the same command again once it is back" in err
