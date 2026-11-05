@@ -38,6 +38,7 @@ from informatics.filtering import (
     OUTSIDE_STRATA,
     FilterConfig,
     annotate,
+    in_years,
     search_text,
 )
 from informatics.stats import cohen_kappa, wilson_interval
@@ -79,7 +80,9 @@ def make_label_sample(
     _check_keywords(summary)
     cfg = summary["config"]
     config = FilterConfig(
-        min_ai_hits=cfg["min_ai_hits"], min_medicine_hits=cfg["min_medicine_hits"]
+        min_ai_hits=cfg["min_ai_hits"],
+        min_medicine_hits=cfg["min_medicine_hits"],
+        years=tuple(cfg["years"]) if cfg.get("years") else None,
     )
     exclude = set(exclude_ids)
     candidates = read_parquet(
@@ -93,13 +96,17 @@ def make_label_sample(
         picked.append(part.sample(n=min(n, len(part)), random_state=seed).assign(stratum=stratum))
 
     quotas = {s: n_per_stratum for s in OUTSIDE_STRATA}
-    table = pq.read_table(raw_path, columns=["id", "title", "abstract", "comments"])
+    table = pq.read_table(raw_path, columns=["id", "title", "abstract", "comments", "year"])
     order = np.random.default_rng(seed).permutation(table.num_rows)
     for start in range(0, len(order), batch_size):
         if not any(quotas.values()):
             break
         chunk = table.take(order[start : start + batch_size]).to_pandas()
-        chunk = chunk[~chunk["id"].isin(candidate_ids) & ~chunk["id"].isin(exclude)]
+        chunk = chunk[
+            ~chunk["id"].isin(candidate_ids)
+            & ~chunk["id"].isin(exclude)
+            & in_years(chunk, config.years)  # the same window as the filter
+        ]
         strata = annotate(chunk, config)["stratum"]
         for stratum, remaining in quotas.items():
             if remaining:

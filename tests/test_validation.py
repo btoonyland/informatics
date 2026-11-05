@@ -183,3 +183,14 @@ def test_random_theme_audit_measures_recall():
     assert table.loc[("llm", "bias"), "papers"] == 2
     with pytest.raises(ValueError, match="unknown theme"):
         evaluate_theme_audit(sheet.assign(themes="privcy"), tagged)
+
+
+def test_label_sample_stays_inside_the_year_window(layout, corpus):
+    config = FilterConfig(years=(2012, 2018))
+    summary = run_filter(layout.raw("cs"), "cs", layout.candidates("cs"), layout.background("cs"),
+                         layout.filter_summary("cs"), config)  # fmt: skip
+    summary = read_json(layout.filter_summary("cs"))  # as label-sample reads it, from JSON
+    _, key = make_label_sample(layout.raw("cs"), layout.candidates("cs"), summary, n_strict=10,
+                               n_wide=5, n_per_stratum=5, seed=1)  # fmt: skip
+    years = corpus.set_index("id").loc[key["id"], "year"]
+    assert years.between(2012, 2018).all() and len(key) > 20

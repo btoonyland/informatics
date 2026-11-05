@@ -16,6 +16,8 @@ def test_describe_states_population_and_dates():
         "Dates: earliest date in the record: received, published online or in print."
     )
     assert "population is unknown" in describe("x", None)[0]
+    windowed = {**summary, "config": {"years": [2021, 2025]}}
+    assert "; only papers from 2021-2025)" in describe("pubmed", windowed)[0]
 
 
 def test_filter_summary_records_the_import(layout):

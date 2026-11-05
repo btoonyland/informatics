@@ -1,0 +1,106 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "1. Harvest a set from arXiv",
+      "detail": "Downloads records changed since the start date. Takes hours; if stopped, run it again to continue.",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/informatics",
+      "args": ["harvest", "--set", "${input:set}", "--from", "${input:from}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "2. Filter: find candidates in a year window",
+      "detail": "Keeps papers first submitted in the given years, then applies the keyword net.",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/informatics",
+      "args": ["filter", "--set", "${input:set}", "--years", "${input:years}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "3. Analyze",
+      "detail": "Writes results/<set>/report.html, report.md and the tables. Several sets: cs,q-bio",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/informatics",
+      "args": ["analyze", "--set", "${input:set}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "4. Open the HTML report",
+      "detail": "Opens results/<folder>/report.html in the default browser.",
+      "type": "process",
+      "command": "xdg-open",
+      "args": ["${workspaceFolder}/results/${input:resultsFolder}/report.html"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Label a sample (for measuring and training)",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/informatics",
+      "args": ["label-sample", "--set", "${input:set}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Evaluate the labels",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/informatics",
+      "args": ["label-evaluate", "--set", "${input:set}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Train the classifier on the labels",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/informatics",
+      "args": ["classify", "--set", "${input:set}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Update a set (what changed since the last harvest)",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/informatics",
+      "args": ["update", "--set", "${input:set}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Run the tests",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": ["-m", "pytest"],
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Check the code style (ruff)",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/ruff",
+      "args": ["check", "."],
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "set",
+      "type": "promptString",
+      "description": "arXiv set (cs, q-bio, ...; several for analyze: cs,q-bio)",
+      "default": "cs"
+    },
+    {
+      "id": "from",
+      "type": "promptString",
+      "description": "First day of the window, YYYY-MM-DD (records changed since then are downloaded)",
+      "default": "2021-01-01"
+    },
+    {
+      "id": "years",
+      "type": "promptString",
+      "description": "Years to keep, by first submission (e.g. 2021-2025)",
+      "default": "2021-2025"
+    },
+    {
+      "id": "resultsFolder",
+      "type": "promptString",
+      "description": "Results folder (cs, or cs+q-bio for sets analysed together)",
+      "default": "cs"
+    }
+  ]
+}

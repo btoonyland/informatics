@@ -182,3 +182,30 @@ def test_dvc_pipeline_commands_are_valid():
         argv = shlex.split(command)
         assert argv[0] == "informatics"
         parse_args(argv[1:])  # exits on an unknown option or value
+
+
+def test_filter_years_through_the_cli(layout, monkeypatch, capsys):
+    monkeypatch.chdir(layout.data_dir.parent)
+    assert parse_args(["filter", "--set", "cs", "--years", "2021-2025"]).years == (2021, 2025)
+    assert main(["filter", "--set", "cs", "--years", "2015-2020"]) == 0
+    assert "Kept papers from 2015-2020; left out" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        parse_args(["filter", "--set", "cs", "--years", "2025-2021"])
+
+
+def test_vscode_tasks_are_valid_commands():
+    """Every informatics task in .vscode/tasks.json, with its default inputs, parses."""
+    import json
+    import re
+
+    root = Path(__file__).resolve().parent.parent
+    config = json.loads((root / ".vscode" / "tasks.json").read_text())
+    defaults = {i["id"]: i["default"] for i in config["inputs"]}
+    checked = 0
+    for task in config["tasks"]:
+        if task["command"].endswith("/informatics"):
+            args = [re.sub(r"\$\{input:(\w+)\}", lambda m: defaults[m.group(1)], a)
+                    for a in task["args"]]  # fmt: skip
+            parse_args(args)  # exits on an unknown option or value
+            checked += 1
+    assert checked >= 7

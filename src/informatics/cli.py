@@ -182,6 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--background-size", type=int, default=50_000, help="AI-only papers kept for comparison"
     )
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--years",
+        type=_years,
+        help="keep only papers from these years, e.g. 2021-2025 (arXiv: year of first submission)",
+    )
 
     p = sub.add_parser("label-sample", help="draw papers to hand-label for measuring selection")
     add_set(p)

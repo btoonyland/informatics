@@ -56,6 +56,26 @@ Use `--set` more than once (or `--set cs,q-bio`) to analyse sets together; paper
 in both are counted once, and the reports compare the sets. Every command has `--help`, and
 `python -m informatics …` works without the console script.
 
+## Recent years only
+
+To analyse, say, the five years 2021–2025, download only what changed since the start of the
+window and keep only papers first submitted inside it:
+
+```bash
+informatics harvest --set cs --from 2021-01-01
+```
+
+```bash
+informatics filter --set cs --years 2021-2025
+```
+
+`--from` selects records by the date they last *changed*, so it also brings older papers that
+were revised or got a journal reference since then; `--years` drops those (and anything from
+later years) before anything else is counted. Do not add `--until`: a paper submitted in 2025
+and revised in 2026 would be lost. The reports state the window, and rising and falling phrases
+compare periods inside it. To include the current year so far, use `--years 2021-2026`; its
+share-based numbers are comparable, its paper count is not yet complete.
+
 ## Pipeline
 
 ```
@@ -87,7 +107,7 @@ JSON. `informatics to-csv <file.parquet>` converts any intermediate file.
 | `import-pubmed --set S` | A **sample** of PubMed through E-utilities: up to `--per-year` records per publication year matching `--query`. |
 | `import-pubmed-files FILES --set S` | **All** PubMed records with an AI MeSH heading or AI keyword, from the annual baseline (and update) files. |
 | `import-openalex --set S` | OpenAlex works matching `--filter` (default: AI topics in medicine), journals and preprints alike. |
-| `filter --set S` | Excludes withdrawn and non-English papers, finds candidates with the wide keyword net, flags near-duplicates, and keeps a reproducible random sample of AI-only papers for comparison. |
+| `filter --set S` | Excludes withdrawn and non-English papers, finds candidates with the wide keyword net, flags near-duplicates, and keeps a reproducible random sample of AI-only papers for comparison. `--years 2021-2025` keeps only papers from those years. |
 | `label-sample` / `label-evaluate` | Draw papers to hand-label; measure the keyword rule, the wide net and the classifier against the labels. |
 | `classify --set S` | Decide which candidates are relevant: `--method model` trains a classifier on the labels; `--method llm` asks a language model. |
 | `label-themes-sample` / `label-themes-evaluate` | Measure the themes (keyword or language-model) against hand labels. |
@@ -318,6 +338,33 @@ closest equivalent to arXiv's first submission; OpenAlex dates are publication d
 - **Embeddings** download the model from Hugging Face the first time it is needed. The default
   is `sentence-transformers/all-MiniLM-L6-v2`; `allenai/specter2_base` was trained on scientific
   papers.
+
+## Working in VS Code
+
+The repository includes VS Code settings (`.vscode/`). Open the folder (`code .`, or File →
+Open Folder), accept the recommended extensions (Python, Python Debugger, Ruff, Data Wrangler),
+and create the environment in the integrated terminal (Terminal → New Terminal):
+
+```bash
+python3 -m venv .venv
+```
+
+```bash
+.venv/bin/python -m pip install -e ".[dev]"
+```
+
+Then pick `.venv` with **Python: Select Interpreter** (Ctrl+Shift+P) if VS Code has not done so;
+new terminals then activate it automatically.
+
+- **Terminal → Run Task** lists the pipeline steps (harvest, filter with a year window,
+  analyze, open the HTML report, labelling, classify, update, tests). Each asks for the set and
+  dates, with 2021–2025 filled in. A harvest takes hours and stops when VS Code closes; running
+  the task again continues it.
+- The **Testing** panel (flask icon) runs and debugs the tests.
+- **Run and Debug** → "informatics (asks for the arguments)" runs any command under the
+  debugger, e.g. `filter --set cs --years 2021-2025`.
+- Files are formatted with Ruff on save, matching the CI checks. CSV and Parquet files open in
+  Data Wrangler (right-click → Open in Data Wrangler).
 
 ## Development
 

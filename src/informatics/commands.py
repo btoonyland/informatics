@@ -238,6 +238,7 @@ def cmd_filter(args: argparse.Namespace, layout: Layout) -> None:
         min_medicine_hits=args.min_medicine_hits,
         background_size=args.background_size,
         seed=args.seed,
+        years=args.years,
     )
     summary = run_filter(
         raw,
@@ -248,6 +249,9 @@ def cmd_filter(args: argparse.Namespace, layout: Layout) -> None:
         config,
     )
     counts = summary["counts"]
+    if args.years:
+        print(f"Kept papers from {args.years[0]}-{args.years[1]}; left out "
+              f"{counts['outside_years']:,} from other years.")  # fmt: skip
     print(
         f"{counts['candidates']:,} of {counts['scanned']:,} papers are candidates "
         f"({counts['strict']:,} meet the keyword rule) -> {layout.candidates(args.set_name)}"

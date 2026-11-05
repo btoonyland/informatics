@@ -59,6 +59,8 @@ def describe(set_name: str, summary: dict | None) -> list[str]:
             for key, template in DETAILS.items()
             if (value := info.get(key)) not in (None, "", [])
         ]
+        if years := (summary.get("config") or {}).get("years"):
+            details.append(f"only papers from {years[0]}-{years[1]}")
         text = f"{set_name}: {n:,} papers, {population}"
         if details:
             text += " (" + "; ".join(details) + ")"

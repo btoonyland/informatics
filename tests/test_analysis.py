@@ -204,6 +204,10 @@ def test_combine_merges_corpora():
 def test_default_periods():
     assert default_periods(np.array([2015.0, 2024.0, np.nan])) == ((2018, 2021), (2022, 2024))
     assert default_periods(np.array([np.nan])) is None
+    # Five years of data: the earlier period starts with the data, not before it.
+    five = np.arange(2021, 2026, dtype=float)
+    assert default_periods(five) == ((2021, 2022), (2023, 2025))
+    assert default_periods(np.array([2024.0, 2025.0])) is None  # too short for two periods
 
 
 def test_papers_by_year_shares():

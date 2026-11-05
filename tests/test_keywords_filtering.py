@@ -164,3 +164,20 @@ def test_background_sample_is_reproducible(layout):
         )
     first, second = (read_parquet(p)["id"].tolist() for p in paths)
     assert first == second
+
+
+def test_year_window_drops_other_years_first(layout, corpus):
+    config = FilterConfig(background_size=30, batch_size=100, years=(2015, 2020))
+    summary = run_filter(layout.raw("cs"), "cs", layout.candidates("cs"), layout.background("cs"),
+                         layout.filter_summary("cs"), config)  # fmt: skip
+    years = corpus.set_index("id")["year"]
+    inside = years.between(2015, 2020)
+    counts = summary["counts"]
+    assert counts["scanned"] == inside.sum() and counts["outside_years"] == (~inside).sum()
+    assert sum(counts[s] for s in STRATA) == counts["scanned"]
+    assert {int(y) for y in summary["by_year"]} <= set(range(2015, 2021))
+    for path in (layout.candidates("cs"), layout.background("cs")):
+        assert read_parquet(path)["year"].between(2015, 2020).all()
+    assert list(summary["config"]["years"]) == [2015, 2020]
+    with pytest.raises(ValueError, match="end is before the start"):
+        FilterConfig(years=(2021, 2019))

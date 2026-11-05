@@ -18,6 +18,10 @@ one stratum, used in the summary and for measuring each stage (validation.py):
 * ``excluded``       withdrawn, or not written in English (language is only checked for
                      candidates and for papers that could join the comparison sample)
 
+With ``years`` set (``informatics filter --years 2021-2025``), papers from other years are
+dropped first, so every count, sample and stratum covers only that window. A paper's year is
+that of its first submission for arXiv (from the identifier) and its earliest date for PubMed.
+
 ``strict`` and ``wide_only`` papers are the candidates. They are written to
 ``data/interim/<set>_candidates.parquet``, where ``keyword_rule`` tells the two apart.
 Candidates are also checked for near-duplicates (the same paper under two IDs). The extra copies
@@ -81,10 +85,22 @@ class FilterConfig:
     background_size: int = 50_000
     seed: int = 42
     batch_size: int = 100_000
+    years: tuple[int, int] | None = None  # first and last year to keep; None keeps all
 
     def __post_init__(self) -> None:
         if self.min_ai_hits < 1 or self.min_medicine_hits < 1:
             raise ValueError("--min-ai-hits and --min-medicine-hits must be at least 1")
+        if self.years is not None and self.years[0] > self.years[1]:
+            raise ValueError(f"years {self.years[0]}-{self.years[1]}: the end is before the start")
+
+
+def in_years(df: pd.DataFrame, years: tuple[int, int] | None) -> pd.Series:
+    """True for papers from ``years`` (inclusive); every paper if ``years`` is None. A paper
+    whose year is unknown is outside any window."""
+    if years is None:
+        return pd.Series(True, index=df.index)
+    year = df["year"].astype("Float64")
+    return year.between(years[0], years[1]).fillna(False).astype(bool)
 
 
 def search_text(df: pd.DataFrame) -> pd.Series:
@@ -177,8 +193,14 @@ def run_filter(
     by_year: dict[int, Counter[str]] = defaultdict(Counter)
     candidate_parts: list[pd.DataFrame] = []
     reservoir: pd.DataFrame | None = None
+    outside_years = 0
 
     for chunk in iter_parquet(raw_path, batch_size=config.batch_size):
+        window = in_years(chunk, config.years)
+        outside_years += int((~window).sum())
+        chunk = chunk[window]
+        if chunk.empty:
+            continue
         chunk = pd.concat([chunk, annotate(chunk, config)], axis=1)
         strata.update(chunk["stratum"].value_counts().to_dict())
         sources.update(chunk["source"].fillna("unknown").value_counts().to_dict())
@@ -232,6 +254,7 @@ def run_filter(
             "excluded_non_english": exclusions.get("non-english", 0),
             "near_duplicates": len(duplicates),
             "background_sample": len(background),
+            "outside_years": outside_years,  # dropped by --years before anything else
         },
         "by_year": {str(y): dict(by_year[y]) for y in sorted(by_year)},
         "themes_keyword_rule": {str(k): int(v) for k, v in theme_counts.items()},

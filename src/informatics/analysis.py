@@ -146,12 +146,17 @@ def papers_by_year(papers: pd.DataFrame, summaries: dict[str, dict | None]) -> p
 
 
 def default_periods(years: np.ndarray) -> tuple[tuple[int, int], tuple[int, int]] | None:
-    """(earlier, recent): the last three years with papers against the four years before."""
+    """(earlier, recent): the last three years with papers against the (up to) four years
+    before, starting no earlier than the first year with papers. None if there is too little
+    time for two periods."""
     valid = years[~np.isnan(years)]
     if not valid.size:
         return None
-    last = int(valid.max())
-    return (last - 6, last - 3), (last - 2, last)
+    first, last = int(valid.min()), int(valid.max())
+    earlier_start = max(first, last - 6)
+    if earlier_start > last - 3:
+        return None
+    return (earlier_start, last - 3), (last - 2, last)
 
 
 def with_llm_themes(papers: pd.DataFrame, sets: list[str], layout: Layout) -> pd.DataFrame:
