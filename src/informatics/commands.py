@@ -116,7 +116,14 @@ def cmd_harvest(args: argparse.Namespace, layout: Layout) -> None:
             layout, args.set_name, source="oai-pmh", set_spec=args.set_name,
             base_url=args.base_url, date_from=args.date_from, date_until=args.date_until,
         )  # fmt: skip
-        print(f"Harvest complete: {layout.raw(args.set_name)}")
+        print(f"Harvest complete: {state['records']:,} records in {layout.raw(args.set_name)}")
+        if state["records"] == 0:  # arXiv answers an unknown set name with "no records match"
+            print(
+                f"Warning: no records for set {args.set_name!r}"
+                + (f" changed since {args.date_from}" if args.date_from else "")
+                + ". Check the set name with `informatics list-sets`.",
+                file=sys.stderr,
+            )
     else:
         print(f"Paused after {state['records']} records; run the same command to continue.")
 

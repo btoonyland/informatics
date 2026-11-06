@@ -224,3 +224,16 @@ def test_network_failures_say_how_to_continue(tmp_path, monkeypatch, capsys):
     assert main(["count", "--set", "cs"]) == 1
     err = capsys.readouterr().err
     assert "network error" in err and "run the same command again once it is back" in err
+
+
+def test_an_empty_harvest_warns_about_the_set_name(tmp_path, monkeypatch, capsys):
+    from helpers import client_for, oai_error, ok
+
+    monkeypatch.chdir(tmp_path)
+    client = client_for([ok(oai_error("noRecordsMatch"))])
+    monkeypatch.setattr("informatics.harvest.HttpClient", lambda **settings: client)
+    assert main(["harvest", "--set", "qbio", "--from", "2021-01-01", "--delay", "0"]) == 0
+    captured = capsys.readouterr()
+    assert "Harvest complete: 0 records" in captured.out
+    assert "no records for set 'qbio' changed since 2021-01-01" in captured.err
+    assert "informatics list-sets" in captured.err
