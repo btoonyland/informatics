@@ -1,14 +1,17 @@
 # Convenience targets. Usage: make pipeline SET=q-bio
 # Recent years only: make harvest FROM=2021-01-01, then make filter YEARS=2021-2025
 SET ?= cs
-PY ?= python
+# The project's virtual environment (make install creates it); plain python3 if there is none.
+PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 FROM ?=
 YEARS ?=
 
 .PHONY: install harvest update filter analyze pipeline repro test lint
 
 install:
-	$(PY) -m pip install -e ".[dev]"
+	test -x .venv/bin/python || python3 -m venv .venv
+	.venv/bin/python -m pip install --upgrade pip
+	.venv/bin/python -m pip install -e ".[dev]"
 
 harvest:
 	$(PY) -m informatics harvest --set $(SET) $(if $(FROM),--from $(FROM))

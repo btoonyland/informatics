@@ -14,11 +14,24 @@ candidates are relevant. Hand-labelled samples measure how well each stage works
 
 ## Quick start
 
-Requires Python 3.10 or newer.
+Requires Python 3.10 or newer (on Ubuntu: `sudo apt install python3-venv`). Install into a
+virtual environment in the repository folder:
+
+```bash
+python3 -m venv .venv
+```
+
+```bash
+source .venv/bin/activate
+```
 
 ```bash
 python -m pip install -e ".[dev]"
 ```
+
+The `informatics` command exists only while the environment is active: run
+`source .venv/bin/activate` in every new terminal (VS Code does it for you once `.venv` is the
+selected interpreter), or call `.venv/bin/informatics` directly.
 
 Get the raw data for a set, using **one** of these:
 
@@ -55,6 +68,16 @@ informatics classify --set cs
 Use `--set` more than once (or `--set cs,q-bio`) to analyse sets together; papers cross-listed
 in both are counted once, and the reports compare the sets. Every command has `--help`, and
 `python -m informatics …` works without the console script.
+
+### "command not found"?
+
+- `informatics` or `pytest`: the environment is not active in this terminal
+  (`source .venv/bin/activate` from the repository folder, or use `.venv/bin/informatics`), or the
+  install did not finish (run `python -m pip install -e ".[dev]"` again and read its last lines).
+- `python` or `pip`: outside a virtual environment Ubuntu only has `python3` (and
+  `python3 -m pip`).
+- `make`, `git`, `tmux`: `sudo apt install make git tmux`. `code`: `sudo snap install code
+  --classic`, then open a new terminal.
 
 ## Recent years only
 
