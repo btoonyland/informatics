@@ -66,14 +66,22 @@ informatics classify --set cs
 ```
 
 Use `--set` more than once (or `--set cs,q-bio`) to analyse sets together; papers cross-listed
-in both are counted once, and the reports compare the sets. Every command has `--help`, and
-`python -m informatics …` works without the console script.
+in both are counted once, and the reports compare the sets. Every command has `--help`.
 
-### "command not found"?
+`make` does all of this for you: `make install` creates `.venv` and installs the project, and
+every other target (`make harvest FROM=2021-01-01`, `make filter YEARS=2021-2025`,
+`make analyze`, `make test`) does so first when needed, so nothing has to be activated.
 
-- `informatics` or `pytest`: the environment is not active in this terminal
-  (`source .venv/bin/activate` from the repository folder, or use `.venv/bin/informatics`), or the
-  install did not finish (run `python -m pip install -e ".[dev]"` again and read its last lines).
+### "command not found" or "No module named informatics"?
+
+- `informatics: command not found` or `pytest: command not found`: the environment is not
+  active in this terminal (`source .venv/bin/activate` from the repository folder, or use
+  `.venv/bin/informatics`).
+- `/usr/bin/python3: No module named informatics`: the command ran with Ubuntu's own Python.
+  Use `.venv/bin/python -m informatics …`, `.venv/bin/informatics …` or `make`.
+- `.venv/bin/python: No module named informatics`: the install into `.venv` never succeeded,
+  or the folder was moved after it. Run `.venv/bin/python -m pip install -e ".[dev]"` (or
+  `make install`) and check that it ends with `Successfully installed … informatics`.
 - `python` or `pip`: outside a virtual environment Ubuntu only has `python3` (and
   `python3 -m pip`).
 - `make`, `git`, `tmux`: `sudo apt install make git tmux`. `code`: `sudo snap install code

@@ -2,6 +2,14 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "0. Install or repair the environment",
+      "detail": "Creates .venv if needed and installs this project into it. Run once, and again after a git pull that changes pyproject.toml.",
+      "type": "shell",
+      "command": "(test -x .venv/bin/python || python3 -m venv .venv) && .venv/bin/python -m pip install -e '.[dev]'",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
       "label": "1. Harvest a set from arXiv",
       "detail": "Downloads records changed since the start date. Takes hours; waits out internet outages of up to about 8 hours; if stopped, run it again to continue.",
       "type": "process",
